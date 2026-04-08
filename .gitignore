@@ -1,0 +1,66 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+*.egg
+dist/
+build/
+.eggs/
+
+# Virtual environments
+venv/
+.venv/
+env/
+
+# macOS metadata
+.DS_Store
+._*
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Model weights & trained artifacts (too large for git)
+*.pt
+*.pth
+*.bin
+*.onnx
+
+# Numpy arrays & embeddings
+*.npy
+*.npz
+
+# FAISS indexes
+*.faiss
+
+# Raw data (XLSX files are large)
+data/raw_xlsx/
+
+# Generated/intermediate data (reproducible via pipeline)
+data/jsonl/
+data/cleaned/
+data/meta/
+data/reports/
+data/iql/
+data/indexes/
+data/successful_ops/
+data/runs/
+
+# Keep the data directory structure via .gitkeep files
+!data/raw_xlsx/.gitkeep
+!data/jsonl/.gitkeep
+!data/cleaned/.gitkeep
+!data/meta/.gitkeep
+!data/reports/.gitkeep
+!data/iql/.gitkeep
+!data/iql/selector/.gitkeep
+!data/indexes/.gitkeep
+!data/indexes/policies/.gitkeep
+!data/indexes/faiss/.gitkeep
+!data/successful_ops/.gitkeep
+!data/runs/.gitkeep
+
+# Images (training plots)
+data/iql/selector/*.png

@@ -1,0 +1,13 @@
+torch
+sentence-transformers
+faiss-cpu
+pandas
+numpy
+requests
+tqdm
+matplotlib
+scikit-learn
+fastapi
+uvicorn
+pyyaml
+openpyxl
