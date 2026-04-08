@@ -45,13 +45,13 @@ echo ""
 echo ">>> STAGE 3: Running Experiments"
 
 echo "  Experiment 1: Zero-shot simulation …"
-python experiments/exp1_zero_shot.py --runs 5
+python experiments/exp1_zero_shot.py --runs 3
 
 echo "  Experiment 2: RAG over successful operators …"
-python experiments/exp2_rag_successful.py --runs 5
+python experiments/exp2_rag_successful.py --runs 3
 
 echo "  Experiment 3: IQL policy selection + RAG …"
-python experiments/exp3_iql_policy.py --runs 5 --mode state
+python experiments/exp3_iql_policy.py --runs 3 --mode embed
 
 # ── STAGE 4: Evaluation ────────────────────────────────────────────────────
 echo ""

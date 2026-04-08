@@ -64,7 +64,7 @@ from iql.networks import QNetworkState, QNetworkEmbed, ValueNetwork
 # CLI
 # ─────────────────────────────────────────────────────────────────────────────
 parser = argparse.ArgumentParser(description="Train IQL policy selector")
-parser.add_argument("--mode", choices=["embed", "state"], default="state")
+parser.add_argument("--mode", choices=["embed", "state"], default="embed")
 args = parser.parse_args()
 
 MODEL_Q_OUT = SELECTOR_DIR / f"iql_model_{args.mode}.pt"

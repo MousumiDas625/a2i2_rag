@@ -116,8 +116,8 @@ MAX_REFUSAL_STREAK = 5    # consecutive refusals → stop
 
 DEFAULT_TEMPERATURE_OP  = 0.5
 DEFAULT_TEMPERATURE_RES = 0.8
-DEFAULT_MAX_TOKENS_OP   = 64
-DEFAULT_MAX_TOKENS_RES  = 128
+DEFAULT_MAX_TOKENS_OP   = 32
+DEFAULT_MAX_TOKENS_RES  = 32
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # DECISION JUDGE CONFIG
