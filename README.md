@@ -15,7 +15,7 @@ This project trains an **Implicit Q-Learning (IQL)** policy selector that learns
 7. [Running on Endeavour (SLURM)](#running-on-endeavour-slurm)
 8. [Success Rate Matrices](#success-rate-matrices)
 9. [Where to Find Outputs](#where-to-find-outputs)
-10. [IQL Embed Mode](#iql-embed-mode)
+10. [IQL Dueling-Embed Architecture](#iql-dueling-embed-architecture)
 11. [Switching LLM Providers](#switching-llm-providers)
 12. [Interactive Mode](#interactive-mode)
 13. [API Server](#api-server)
@@ -204,7 +204,7 @@ The 5 "trained" personas have human-collected dialogues used for IQL training. T
 |---|---|---|
 | `I01_build_iql_dataset.py` | Encodes states via sentence embeddings, builds (state, action, reward) tuples | `data/iql/iql_dataset.jsonl` |
 | `I02_build_operator_policies.py` | Computes per-policy prototype embeddings (centroid of each operator's utterances) | `data/indexes/policies/` |
-| `I03_train_iql.py` | Trains embedding-based Q-network and V-network (see [IQL Embed Mode](#iql-embed-mode)) | `data/iql/selector/*.pt` |
+| `I03_train_iql.py` | Trains Dueling-Embed Q-network and V-network (see [IQL Dueling-Embed Architecture](#iql-dueling-embed-architecture)) | `data/iql/selector/*.pt` |
 | `I04_build_rag_indexes.py` | Builds per-policy FAISS indexes for few-shot RAG retrieval | `data/indexes/faiss/` |
 | `I05_extract_successful_utterances.py` | Builds a global corpus of operator utterances from successful dialogues | `data/successful_ops/` |
 
@@ -417,6 +417,7 @@ python experiments/make_success_matrices.py \
 |---|---|
 | Trained Q-network | `data/iql/selector/iql_model.pt` |
 | Trained V-network | `data/iql/selector/value_model.pt` |
+| Normalisation stats | `data/iql/selector/norm_stats.npz` |
 | Training loss curves | `iql/plots/training_curves.png` |
 | Per-policy Q-values | `iql/plots/per_policy_qvalues.png` |
 | IQL dataset | `data/iql/iql_dataset.jsonl` |
@@ -493,42 +494,92 @@ python api/server.py
 
 ---
 
-## IQL Embed Mode
+## IQL Dueling-Embed Architecture
 
-`I03_train_iql.py` trains the Q-network using an **embedding-based** architecture. Here is exactly what happens:
+`I03_train_iql.py` trains the Q-network using a **Dueling embedding-based** architecture designed to produce *distinct* Q-values per policy. Here is exactly what happens:
 
 ### State representation
-The conversation state `s` is the **mean sentence embedding** (via `all-MiniLM-L6-v2`, 384-dim) of the last N resident utterances. This captures what the resident has been saying recently — their resistance level, concerns, and emotional tone — without any manual feature engineering.
+The conversation state `s` is the **mean sentence embedding** (via `all-MiniLM-L6-v2`, 384-dim) of the last N resident utterances. This captures what the resident has been saying recently — their resistance level, concerns, and emotional tone — without any manual feature engineering. States are z-normalised using training-set statistics saved to `norm_stats.npz`.
 
 ### Policy (action) representations
-Each of the 5 operator policies (bob, niki, ross, michelle, lindsay) is represented by a **learnable 384-dim embedding vector**, initialised from the centroid of all operator utterances in that policy's corpus (the "prototype"). These embeddings are fine-tuned during training so the network learns a geometry where communication styles that work for similar residents end up close together.
+Each of the 5 operator policies (bob, niki, ross, michelle, lindsay) is represented by a **frozen 384-dim embedding vector** — the centroid of all operator utterances in that policy's corpus (the "prototype"). These embeddings are registered as non-learnable buffers, which **prevents embedding collapse** (a failure mode seen with learnable embeddings where all policies converge to the same vector).
+
+### Why Dueling + Dot-Product (not concatenation)
+
+The original embed architecture concatenated `[state ‖ action_emb]` and passed it through a shared MLP. This consistently produced collapsed Q-values (spread ~0.002) because the network learned to ignore the action embedding portion of the input — the state alone was sufficient to minimise the Bellman loss, so the 384 action-embedding dimensions became dead weight.
+
+The **Dueling architecture** fixes this structurally:
+
+1. **Shared encoder** processes only the state, producing hidden features `h`.
+2. **Value head** computes `V(s) = linear(h)` — a scalar baseline.
+3. **Advantage head** projects `h` into action-embedding space via a learned linear layer, then computes `A(s,a) = project(h) · embed(a)` via **dot product** with each frozen action embedding.
+4. Advantages are centred: `A(s,a) ← A(s,a) − mean_a[A(s,a)]`.
+5. Final: `Q(s,a) = V(s) + A(s,a)`.
+
+Because the dot product is computed against geometrically distinct frozen embeddings, different actions are **structurally guaranteed** to produce different advantage values, resulting in well-separated Q-values.
 
 ### Q-network architecture
+
 ```
-Input: [state_vec (384) ‖ policy_embedding (384)]  →  768-dim
-  Linear(768 → 1024) + ReLU + LayerNorm + Dropout
-  Linear(1024 → 1024) + ReLU + LayerNorm + Dropout
-  Linear(1024 → 1)  →  scalar  Q(s, a)
+State (384-dim)
+  └─→ Encoder:
+        Linear(384 → 256) + ReLU + LayerNorm + Dropout(0.1)
+        Linear(256 → 256) + ReLU + LayerNorm + Dropout(0.1)
+        → hidden features h (256-dim)
+  └─→ Value head:    Linear(256 → 1)              → V(s)    scalar
+  └─→ Advantage head: Linear(256 → 384)            → projection (384-dim)
+                       projection · action_embeds.T → A(s,a)  (5 values)
+                       A ← A − mean(A)             → centred advantages
+
+  Q(s,a) = V(s) + A(s,a)   →  5 Q-values per state
 ```
-A separate lightweight **ValueNetwork** `V(s)` (same MLP structure, 512 hidden) is trained in parallel.
+
+A separate **ValueNetwork** `V(s)` (256 hidden, same depth) is trained in parallel for the Bellman target.
 
 ### Training objective
-For each `(state s, policy a, reward r, next_state s')` tuple from the training data:
+
+For each `(state s, policy a, reward r, next_state s')` tuple:
 
 ```
-Bellman target:    y       = r + γ · V(s')
-Q-loss:            L_Q     = MSE( Q(s,a),   y )
-V-loss:            L_V     = MSE( V(s),     Q(s,a).detach() )
-Orthogonality:     L_orth  = mean( (emb·embᵀ - I)² )
-Total loss:        L       = L_Q  +  λ · L_V  +  ε · L_orth
+Bellman target:  y        = r + γ · V(s')
+Q-loss:          L_Q      = MSE( Q(s,a),  y )
+V-loss:          L_V      = MSE( V(s),    Q(s,a).detach() )
+Margin loss:     L_margin = w · mean( max(0, margin − spread) )
+                   where spread = max_a Q(s,a) − min_a Q(s,a)
+Total loss:      L        = L_Q  +  λ_V · L_V  +  L_margin
 ```
 
-The **orthogonality regularisation** (`L_orth`) pushes the five policy embedding vectors to be geometrically distinct from each other, preventing the model from collapsing all policies to the same representation.
+The **margin loss** penalises the network when the per-sample Q-value spread falls below a threshold (default 0.5), encouraging the model to maintain policy differentiation throughout training.
+
+### Hyperparameters
+
+| Parameter | Value | Description |
+|---|---|---|
+| `IQL_EPOCHS` | 500 | Max training epochs |
+| `IQL_BATCH_SIZE` | 32 | Mini-batch size |
+| `IQL_LR_Q` | 1e-3 | Q-network learning rate |
+| `IQL_LR_V` | 3e-4 | Value network learning rate |
+| `IQL_GAMMA` | 0.50 | Bellman discount factor |
+| `IQL_LAMBDA_V` | 0.3 | V-loss weight |
+| `IQL_MARGIN` | 0.5 | Minimum desired Q-value spread |
+| `IQL_MARGIN_WEIGHT` | 0.1 | Margin loss coefficient |
+| `IQL_EARLY_STOP_PATIENCE` | 40 | Epochs without improvement before stopping |
+| `IQL_DROPOUT` | 0.1 | Dropout rate |
+| `IQL_HIDDEN_DIM_Q` | 256 | Q-network hidden layer width |
+| `IQL_HIDDEN_DIM_V` | 256 | Value network hidden layer width |
 
 ### Inference (at runtime)
-1. Embed the last N resident utterances → `state_vec`
-2. Compute `Q(state_vec, a)` for every policy `a` (5 forward passes)
-3. Return `argmax` policy → operator uses that policy's FAISS index for RAG retrieval
+1. Embed the last N resident utterances → `state_vec` (384-dim)
+2. Normalise with saved training mean/std
+3. Single forward pass: `Q(s) → [Q(s,a1), ..., Q(s,a5)]` — all 5 Q-values at once
+4. Return `argmax` policy → operator uses that policy's FAISS index for RAG retrieval
+
+### Q-value separation (verified)
+
+| Metric | Old (concat) | New (Dueling) |
+|---|---|---|
+| Avg per-sample spread | 0.002 | **1.275** |
+| Policies selected per test set | 1 (always same) | **3–5 (context-dependent)** |
 
 ---
 
@@ -536,6 +587,8 @@ The **orthogonality regularisation** (`L_orth`) pushes the five policy embedding
 
 - **Dataset**: 104 dialogues, 383 IQL training samples, 5 residents (bob, lindsay, michelle, niki, ross)
 - **Embedding model**: `all-MiniLM-L6-v2` (384-dim)
-- **Embed-mode training**: Ran full 200 epochs (best val loss: 0.466 at epoch 199)
+- **Architecture**: Dueling-Embed Q-network with frozen action embeddings + dot-product advantages
+- **Training**: Early-stopped at epoch 46 (best val loss: 0.513 at epoch 6), avg Q-spread: 1.275
+- **Per-policy Q-values**: bob=1.706, lindsay=1.928, michelle=1.787, niki=1.734, ross=1.664
 - **Successful dialogues**: 98 out of 104 (94.2%)
 - **Successful operator utterances corpus**: 312 utterances with FAISS index

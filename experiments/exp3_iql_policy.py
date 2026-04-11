@@ -42,6 +42,8 @@ def main():
     parser.add_argument("--residents", default=None)
     parser.add_argument("--runs", type=int, default=5)
     parser.add_argument("--max-turns", type=int, default=16)
+    parser.add_argument("--tag", default="",
+                        help="Optional tag appended to the run folder name")
     parser.add_argument("--seed", default="Hello, this is the fire department. "
                         "We need you to evacuate immediately.")
     args = parser.parse_args()
@@ -53,7 +55,8 @@ def main():
     )
 
     ts = datetime.now().strftime("%Y%m%dT%H%M%S")
-    exp_dir = RUNS_DIR / f"exp3_iql_policy_{ts}"
+    folder = f"exp3_iql_policy_{ts}" + (f"_{args.tag}" if args.tag else "")
+    exp_dir = RUNS_DIR / folder
     exp_dir.mkdir(parents=True, exist_ok=True)
 
     # Pre-load the IQL selector once (expensive to init)

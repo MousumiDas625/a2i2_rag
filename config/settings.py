@@ -93,17 +93,21 @@ LLM_MODEL = os.environ.get("LLM_MODEL", OLLAMA_MODEL if LLM_PROVIDER == "ollama"
 # ═══════════════════════════════════════════════════════════════════════════════
 # IQL TRAINING HYPERPARAMETERS
 # ═══════════════════════════════════════════════════════════════════════════════
-IQL_EPOCHS             = 2000
+IQL_EPOCHS             = 800
 IQL_BATCH_SIZE         = 32
-IQL_LR_Q               = 3e-6
-IQL_LR_V               = 3e-4
+IQL_LR_Q               = 3e-4
+IQL_LR_V               = 1e-4
+IQL_WEIGHT_DECAY       = 1e-4
 IQL_VAL_SPLIT          = 0.2
 IQL_GAMMA              = 0.50
 IQL_LAMBDA_V           = 0.3
-IQL_EARLY_STOP_PATIENCE = 100
-IQL_DROPOUT            = 0.3
-IQL_HIDDEN_DIM_Q       = 1024
-IQL_HIDDEN_DIM_V       = 512
+IQL_EARLY_STOP_PATIENCE = 80
+IQL_DROPOUT            = 0.15
+IQL_HIDDEN_DIM_Q       = 256
+IQL_HIDDEN_DIM_V       = 256
+IQL_MARGIN             = 0.5    # minimum desired spread between best/worst Q
+IQL_MARGIN_WEIGHT      = 0.1    # weight of the margin loss term
+IQL_NOISE_STD          = 0.05   # Gaussian noise injected into states during training
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # DATASET CONFIG

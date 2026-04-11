@@ -2,23 +2,11 @@
 policy_selector.py — IQL Policy Selector (Runtime)
 ====================================================
 
-PURPOSE:
-    Loads the trained IQL Q-network and uses it at runtime to select the
-    best operator policy given the current conversation history.
+Loads the trained Dueling-Embed IQL Q-network and selects the best
+operator policy at runtime.
 
-HOW IT WORKS:
-    1. Extract the last N resident utterances from the conversation.
-    2. Embed them with sentence-transformers → mean state vector (384-dim).
-    3. Feed the state into the embedding-based Q-network:
-           Q(s, a) = f( [state_vec ‖ policy_embedding] ) → scalar
-       for every policy a.
-    4. Return the argmax policy name and the full Q-value dictionary.
-
-USAGE (as a library):
-    from retrieval.policy_selector import IQLPolicySelector
-
-    selector = IQLPolicySelector()
-    best_policy, q_values = selector.select_policy(history)
+Q(s,a) = V(s) + A(s,a) − mean_a[A(s,a)]
+where  A(s,a) = project(encode(s)) · frozen_embed(a)
 """
 
 import json
@@ -35,6 +23,8 @@ from config.settings import (
     EMBED_MODEL_NAME, N_LAST_RESIDENT_INFER, DEVICE,
 )
 from iql.networks import QNetworkEmbed
+
+NORM_STATS_FILE = SELECTOR_DIR / "norm_stats.npz"
 
 
 def _embed_state(model: SentenceTransformer, texts: list) -> np.ndarray:
@@ -73,32 +63,30 @@ class IQLPolicySelector:
             torch.load(model_path, map_location=self.device, weights_only=True)
         )
         self.qnet.eval()
-        print(f"[IQLPolicySelector] Loaded on {self.device}")
+
+        if NORM_STATS_FILE.exists():
+            norms = np.load(NORM_STATS_FILE)
+            self.norm_mean = norms["mean"]
+            self.norm_std  = norms["std"]
+        else:
+            self.norm_mean = None
+            self.norm_std  = None
+            print("[WARN] norm_stats.npz not found — states will NOT be normalized")
+
+        print(f"[IQLPolicySelector] Loaded Dueling-Embed Q-net on {self.device}")
 
     def select_policy(self, history: list) -> tuple:
-        """
-        Select the best operator policy for the current conversation state.
-
-        Parameters
-        ----------
-        history : list[dict]
-            Conversation so far.  Each dict has "role" and "text".
-
-        Returns
-        -------
-        (best_policy_name, {policy_name: q_value, ...})
-        """
         res_texts = [h["text"] for h in history if h["role"] == "resident"]
         last_n    = res_texts[-self.n_last:] if res_texts else []
 
         state_vec = _embed_state(self.embed_model, last_n)
-        state_t   = torch.tensor(state_vec, dtype=torch.float32, device=self.device).unsqueeze(0)
+        if self.norm_mean is not None:
+            state_vec = (state_vec - self.norm_mean) / self.norm_std
+        state_t = torch.tensor(state_vec, dtype=torch.float32,
+                               device=self.device).unsqueeze(0)
 
         with torch.no_grad():
-            q_values = np.array([
-                self.qnet(state_t, torch.tensor([a], dtype=torch.long, device=self.device)).item()
-                for a in range(self.num_actions)
-            ])
+            q_values = self.qnet(state_t).cpu().numpy().flatten()
 
         best_idx = int(np.argmax(q_values))
         return self.policy_names[best_idx], dict(zip(self.policy_names, q_values.tolist()))
