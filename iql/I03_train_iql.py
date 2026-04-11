@@ -58,8 +58,8 @@ INPUTS:  data/iql/iql_dataset.jsonl
          data/indexes/policies/operator_prototypes.npy
 OUTPUTS: data/iql/selector/iql_model.pt
          data/iql/selector/value_model.pt
-         data/iql/selector/training_curves.png
-         data/iql/selector/per_policy_qvalues.png
+         iql/plots/training_curves.png
+         iql/plots/per_policy_qvalues.png
 
 USAGE:
     python iql/I03_train_iql.py
@@ -82,7 +82,7 @@ from sklearn.model_selection import train_test_split
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from config.settings import (
     IQL_DATASET_FILE, LABEL_MAP_FILE, PROTOTYPES_FILE,
-    SELECTOR_DIR, DEVICE,
+    SELECTOR_DIR, IQL_PLOTS_DIR, DEVICE,
     IQL_EPOCHS, IQL_BATCH_SIZE, IQL_LR_Q, IQL_LR_V,
     IQL_VAL_SPLIT, IQL_GAMMA, IQL_LAMBDA_V,
     IQL_EARLY_STOP_PATIENCE,
@@ -91,7 +91,7 @@ from iql.networks import QNetworkEmbed, ValueNetwork
 
 MODEL_Q_OUT = SELECTOR_DIR / "iql_model.pt"
 MODEL_V_OUT = SELECTOR_DIR / "value_model.pt"
-PLOT_OUT    = SELECTOR_DIR / "training_curves.png"
+PLOT_OUT    = IQL_PLOTS_DIR / "training_curves.png"
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Load data
@@ -310,12 +310,12 @@ for i, name in enumerate(policy_names):
 plt.title("Per-Policy Avg Q-value During Training")
 plt.xlabel("Epoch"); plt.ylabel("Avg Q(s,a)")
 plt.legend(); plt.grid(True, ls="--", alpha=0.5); plt.tight_layout()
-plt.savefig(SELECTOR_DIR / "per_policy_qvalues.png", dpi=300)
+plt.savefig(IQL_PLOTS_DIR / "per_policy_qvalues.png", dpi=300)
 plt.close()
 
 print(f"\n[OK] Q-network  → {MODEL_Q_OUT}")
 print(f"[OK] V-network  → {MODEL_V_OUT}")
-print(f"[OK] Plots      → {PLOT_OUT}")
+print(f"[OK] Plots      → {IQL_PLOTS_DIR}")
 
 
 if __name__ == "__main__":

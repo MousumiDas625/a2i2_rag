@@ -35,6 +35,10 @@ REPORTS_DIR     = DATA_DIR / "reports"
 IQL_DIR         = DATA_DIR / "iql"
 SELECTOR_DIR    = IQL_DIR / "selector"
 
+# Training plots go here — inside the iql/ source folder so they are
+# committed to the repository alongside the code.
+IQL_PLOTS_DIR   = PROJECT_ROOT / "iql" / "plots"
+
 INDEXES_DIR     = DATA_DIR / "indexes"
 POLICY_DIR      = INDEXES_DIR / "policies"
 FAISS_DIR       = INDEXES_DIR / "faiss"
@@ -89,14 +93,14 @@ LLM_MODEL = os.environ.get("LLM_MODEL", OLLAMA_MODEL if LLM_PROVIDER == "ollama"
 # ═══════════════════════════════════════════════════════════════════════════════
 # IQL TRAINING HYPERPARAMETERS
 # ═══════════════════════════════════════════════════════════════════════════════
-IQL_EPOCHS             = 200
+IQL_EPOCHS             = 2000
 IQL_BATCH_SIZE         = 32
 IQL_LR_Q               = 3e-6
 IQL_LR_V               = 3e-4
 IQL_VAL_SPLIT          = 0.2
 IQL_GAMMA              = 0.50
 IQL_LAMBDA_V           = 0.3
-IQL_EARLY_STOP_PATIENCE = 20
+IQL_EARLY_STOP_PATIENCE = 100
 IQL_DROPOUT            = 0.3
 IQL_HIDDEN_DIM_Q       = 1024
 IQL_HIDDEN_DIM_V       = 512
@@ -144,6 +148,6 @@ API_PORT = 8001
 for _d in [
     RAW_XLSX_DIR, JSONL_DIR, CLEANED_DIR, META_DIR, REPORTS_DIR,
     IQL_DIR, SELECTOR_DIR, POLICY_DIR, FAISS_DIR,
-    SUCCESSFUL_OPS_DIR, RUNS_DIR,
+    SUCCESSFUL_OPS_DIR, RUNS_DIR, IQL_PLOTS_DIR,
 ]:
     _d.mkdir(parents=True, exist_ok=True)

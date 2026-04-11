@@ -417,8 +417,8 @@ python experiments/make_success_matrices.py \
 |---|---|
 | Trained Q-network | `data/iql/selector/iql_model.pt` |
 | Trained V-network | `data/iql/selector/value_model.pt` |
-| Training loss curves | `data/iql/selector/training_curves.png` |
-| Per-policy Q-values | `data/iql/selector/per_policy_qvalues.png` |
+| Training loss curves | `iql/plots/training_curves.png` |
+| Per-policy Q-values | `iql/plots/per_policy_qvalues.png` |
 | IQL dataset | `data/iql/iql_dataset.jsonl` |
 
 ### Experiment results
