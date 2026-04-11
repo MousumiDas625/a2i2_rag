@@ -54,24 +54,32 @@ def _build_zero_shot_prompt(
     history: List[Dict], max_context: int = 6
 ) -> str:
     context = history[-max_context:]
-    dialogue = "\n".join(
+    context_text = "\n".join(
         f"{'Operator' if h['role'] == 'operator' else 'Resident'}: "
         f"{h['text'].strip()}"
         for h in context
     )
 
-    return (
+    instruction = (
         "You are the OPERATOR talking to a RESIDENT during a wildfire "
         "evacuation call.\n"
-        "Read the conversation so far, then produce your next short reply.\n"
-        "Be persuasive and emphasize danger if the resident resists, or "
-        "reassuring if they seem cooperative.\n"
-        "State the importance of life if they continue to be reluctant.\n"
-        "Do not include role labels or meta commentary.\n"
-        "Avoid using any gender-based pronouns.\n"
-        "Keep it coherent to the recent conversation.\n"
-        "Aim for 1–2 natural sentences.\n\n"
-        f"Conversation so far:\n{dialogue}\n\n"
+        "Read the conversation so far, then produce the next operator reply.\n"
+        "CRITICAL RULES:\n"
+        "- KEEP IT BRIEF: Maximum 1-2 short sentences (20-30 words total).\n"
+        "- Get straight to the point - no elaboration.\n"
+        "- Calm, professional, evacuation-focused.\n"
+        "- If resident resists, emphasize urgency/danger; if cooperative, "
+        "give clear next steps.\n"
+        "- No role labels, no meta commentary.\n"
+        "- Avoid gendered pronouns.\n"
+        "- Be direct and concise.\n"
+        "- Only use information revealed in the conversation - do not assume "
+        "anything about the resident.\n"
+        "Use the similar examples for style guidance."
+    )
+    return (
+        f"{instruction}\n\n"
+        f"Conversation so far:\n{context_text}\n\n"
         "Operator:"
     ).strip()
 
@@ -82,7 +90,7 @@ def _build_rag_successful_prompt(
     max_context: int = 6,
 ) -> str:
     context = history[-max_context:]
-    dialogue = "\n".join(
+    context_text = "\n".join(
         f"{'Operator' if h['role'] == 'operator' else 'Resident'}: "
         f"{h['text'].strip()}"
         for h in context
@@ -93,16 +101,31 @@ def _build_rag_successful_prompt(
         text = ex.get("text", "").strip()
         if text:
             ex_lines.append(f"  - {text}")
-    example_block = "\n".join(ex_lines) if ex_lines else "  (no examples available)"
+    examples_text = "\n".join(ex_lines) if ex_lines else "  (no examples available)"
 
-    return (
+    instruction = (
         "You are the OPERATOR talking to a RESIDENT during a wildfire "
         "evacuation call.\n"
-        "Below are examples of successful operator responses from past "
-        "evacuation calls. Use them as inspiration for tone and content.\n\n"
-        f"Successful operator examples:\n{example_block}\n\n"
-        f"Conversation so far:\n{dialogue}\n\n"
-        "Write your next reply as the operator (1–2 sentences, no labels).\n"
+        f"Use the following sample utterances of the operator: "
+        f"{examples_text} for style guidance.\n"
+        "Read the conversation so far, then produce the next operator reply.\n"
+        "CRITICAL RULES:\n"
+        "- KEEP IT BRIEF: Maximum 1-2 short sentences (20-30 words total).\n"
+        "- Get straight to the point - no elaboration.\n"
+        "- Calm, professional, evacuation-focused.\n"
+        "- If resident resists, emphasize urgency/danger; if cooperative, "
+        "give clear next steps.\n"
+        "- No role labels, no meta commentary.\n"
+        "- Avoid gendered pronouns.\n"
+        "- Be direct and concise.\n"
+        "- Only use information revealed in the conversation - do not assume "
+        "anything about the resident.\n"
+        "Use the similar examples for style guidance."
+    )
+    return (
+        f"{instruction}\n\n"
+        f"Conversation so far:\n{context_text}\n\n"
+        f"Example utterances of the operator:\n{examples_text}\n\n"
         "Operator:"
     ).strip()
 
@@ -113,8 +136,9 @@ def _build_iql_rag_prompt(
     rag_examples: List[Dict],
     max_context: int = 6,
 ) -> str:
+    policy_id = policy_name
     context = history[-max_context:]
-    dialogue = "\n".join(
+    context_text = "\n".join(
         f"{'Operator' if h['role'] == 'operator' else 'Resident'}: "
         f"{h['text'].strip()}"
         for h in context
@@ -126,26 +150,30 @@ def _build_iql_rag_prompt(
         o_line = ex.get("operator_text", "").strip()
         if r_line and o_line:
             example_lines.append(f"Resident: {r_line}\nOperator: {o_line}")
-    example_block = "\n\n".join(example_lines) if example_lines else "(no examples)"
+    ex_block = "\n\n".join(example_lines) if example_lines else None
 
-    return (
+    instruction = (
         "You are the OPERATOR talking to a RESIDENT during a wildfire "
         "evacuation call.\n"
-        "Read the conversation so far, then produce your next short reply "
-        "as the operator.\n"
-        "Be persuasive and emphasize danger if the resident resists, or "
-        "reassuring if they seem cooperative.\n"
-        "State the importance of life if they still continue to be reluctant "
-        "over leaving their house or work.\n"
-        "Do not include role labels or meta commentary.\n"
-        "Avoid using any gender-based pronouns.\n"
-        "Refer to the similar example dialogues and generate a similar "
-        "response.\n"
-        "Keep it coherent to the recent conversation.\n"
-        "Aim for 1–2 natural sentences.\n\n"
-        f"Conversation so far:\n{dialogue}\n\n"
-        f"Similar example dialogues (policy: {policy_name}):\n"
-        f"{example_block}\n\n"
+        f"Use the operator policy style optimized for: {policy_id}.\n"
+        "Read the conversation so far, then produce the next operator reply.\n"
+        "CRITICAL RULES:\n"
+        "- KEEP IT BRIEF: Maximum 1-2 short sentences (20-30 words total).\n"
+        "- Get straight to the point - no elaboration.\n"
+        "- Calm, professional, evacuation-focused.\n"
+        "- If resident resists, emphasize urgency/danger; if cooperative, "
+        "give clear next steps.\n"
+        "- No role labels, no meta commentary.\n"
+        "- Avoid gendered pronouns.\n"
+        "- Be direct and concise.\n"
+        "- Only use information revealed in the conversation - do not assume "
+        "anything about the resident.\n"
+        "Use the similar examples for style guidance."
+    )
+    return (
+        f"{instruction}\n\n"
+        f"Conversation so far:\n{context_text}\n\n"
+        f"Similar example dialogues:\n{ex_block if ex_block else '(none)'}\n\n"
         "Operator:"
     ).strip()
 
