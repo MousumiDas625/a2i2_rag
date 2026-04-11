@@ -36,7 +36,7 @@ echo ""
 echo ">>> STAGE 2: IQL Pipeline"
 python iql/I01_build_iql_dataset.py
 python iql/I02_build_operator_policies.py
-python iql/I03_train_iql.py --mode state
+python iql/I03_train_iql.py
 python iql/I04_build_rag_indexes.py
 python iql/I05_extract_successful_utterances.py
 
@@ -51,7 +51,7 @@ echo "  Experiment 2: RAG over successful operators …"
 python experiments/exp2_rag_successful.py --runs 3
 
 echo "  Experiment 3: IQL policy selection + RAG …"
-python experiments/exp3_iql_policy.py --runs 3 --mode embed
+python experiments/exp3_iql_policy.py --runs 3
 
 # ── STAGE 4: Evaluation ────────────────────────────────────────────────────
 echo ""

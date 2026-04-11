@@ -1,5 +1,7 @@
 torch
 sentence-transformers
+# Use faiss-gpu on the Endeavour cluster (CUDA), faiss-cpu for local dev.
+# On the cluster run:  pip install faiss-gpu  (instead of faiss-cpu)
 faiss-cpu
 pandas
 numpy

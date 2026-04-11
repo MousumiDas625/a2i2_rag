@@ -7,35 +7,64 @@ PURPOSE:
     Trains an Implicit Q-Learning (IQL) model that learns to select the
     best operator policy given the current conversation state.
 
-HOW IT WORKS:
-    Two modes (selected via --mode):
-        state  → Q(s) = [Q(s,a1), …, Q(s,aN)]      (state-only head)
-        embed  → Q(s,a) = f([state ‖ emb(a)]) → R   (embedding-based)
+HOW IT WORKS — EMBED MODE:
+    The Q-network scores how well each operator policy fits the current
+    conversation state using an embedding-based architecture:
 
-    Training:
-        • Loads iql_dataset.jsonl (state_vec, action_id, reward).
-        • Constructs next_state by shifting within the same dialogue.
-        • Bellman target: r + γ·V(s').
-        • Joint loss: L_Q (MSE of Q vs target) + λ·L_V (MSE of V vs Q).
-        • Optional orthogonality regularization on operator embeddings.
-        • Early stopping on validation loss.
+        Q(s, a) = f( [state_vec ‖ emb(a)] ) → scalar
 
-    All tensors live on GPU (cuda/mps) throughout training.
+    STATE REPRESENTATION:
+        The state vector `s` is the mean sentence embedding (all-MiniLM-L6-v2,
+        384-dim) of the last N resident utterances in the conversation.
+        This captures what the resident has been saying recently.
+
+    POLICY REPRESENTATIONS (action embeddings):
+        Each operator policy (bob, niki, ross, michelle, lindsay) is
+        represented by a learnable 384-dim embedding vector, initialised
+        from the centroid of all operator utterances in that policy's
+        corpus (the "prototype").  These embeddings are refined during
+        training so the network learns a geometry where similar
+        communication styles cluster together.
+
+    Q-NETWORK ARCHITECTURE:
+        Input:  [state_vec ‖ policy_embedding]  (384 + 384 = 768-dim)
+        → Linear(768, 1024) + ReLU + LayerNorm + Dropout
+        → Linear(1024, 1024) + ReLU + LayerNorm + Dropout
+        → Linear(1024, 1)    → scalar Q(s, a)
+
+    TRAINING:
+        For each (state s, action a, reward r, next_state s') tuple:
+          Bellman target:  y = r + γ · V(s')
+          Q-loss:          L_Q = MSE( Q(s,a),  y )
+          V-loss:          L_V = MSE( V(s),    Q(s,a).detach() )
+          Ortho-reg:       L_orth = mean( (G - I)² )  where G = emb·embᵀ
+                           (encourages policy embeddings to be distinct)
+          Total loss:      L = L_Q + λ·L_V + ε·L_orth
+
+        V(s) is a separate lightweight network that acts as a baseline,
+        stabilising training by decoupling the value estimate from the
+        policy-specific Q-values.
+
+        Training uses early stopping on total validation loss.
+
+    INFERENCE:
+        To pick a policy for a given conversation state:
+          1. Embed the last N resident utterances → state_vec
+          2. Compute Q(state_vec, a) for every policy a
+          3. Return argmax policy
 
 INPUTS:  data/iql/iql_dataset.jsonl
          data/iql/label_map.json
          data/indexes/policies/operator_prototypes.npy
-OUTPUTS: data/iql/selector/iql_model_{mode}.pt
-         data/iql/selector/value_model_{mode}.pt
-         data/iql/selector/training_curves_{mode}.png
-         data/iql/selector/per_policy_qvalues_{mode}.png
+OUTPUTS: data/iql/selector/iql_model.pt
+         data/iql/selector/value_model.pt
+         data/iql/selector/training_curves.png
+         data/iql/selector/per_policy_qvalues.png
 
 USAGE:
-    python iql/I03_train_iql.py --mode state
-    python iql/I03_train_iql.py --mode embed
+    python iql/I03_train_iql.py
 """
 
-import argparse
 import json
 import sys
 from pathlib import Path
@@ -58,18 +87,11 @@ from config.settings import (
     IQL_VAL_SPLIT, IQL_GAMMA, IQL_LAMBDA_V,
     IQL_EARLY_STOP_PATIENCE,
 )
-from iql.networks import QNetworkState, QNetworkEmbed, ValueNetwork
+from iql.networks import QNetworkEmbed, ValueNetwork
 
-# ─────────────────────────────────────────────────────────────────────────────
-# CLI
-# ─────────────────────────────────────────────────────────────────────────────
-parser = argparse.ArgumentParser(description="Train IQL policy selector")
-parser.add_argument("--mode", choices=["embed", "state"], default="embed")
-args = parser.parse_args()
-
-MODEL_Q_OUT = SELECTOR_DIR / f"iql_model_{args.mode}.pt"
-MODEL_V_OUT = SELECTOR_DIR / f"value_model_{args.mode}.pt"
-PLOT_OUT    = SELECTOR_DIR / f"training_curves_{args.mode}.png"
+MODEL_Q_OUT = SELECTOR_DIR / "iql_model.pt"
+MODEL_V_OUT = SELECTOR_DIR / "value_model.pt"
+PLOT_OUT    = SELECTOR_DIR / "training_curves.png"
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Load data
@@ -107,7 +129,7 @@ state_dim   = states.shape[1]
 print(f"[INFO] {len(states)} samples | state_dim={state_dim}, num_actions={num_actions} | device={DEVICE}")
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Operator embeddings
+# Operator prototype embeddings (initial action embeddings)
 # ─────────────────────────────────────────────────────────────────────────────
 if not PROTOTYPES_FILE.exists():
     raise FileNotFoundError(f"Missing {PROTOTYPES_FILE}. Run I02 first.")
@@ -118,14 +140,10 @@ action_dim = action_embeds.shape[1]
 # ─────────────────────────────────────────────────────────────────────────────
 # Build models
 # ─────────────────────────────────────────────────────────────────────────────
-if args.mode == "embed":
-    print("[MODE] Embedding-based Q-network")
-    qnet = QNetworkEmbed(state_dim, action_embeds).to(DEVICE)
-    with torch.no_grad():
-        qnet.action_embeds[:] *= 2.0
-else:
-    print("[MODE] State-only Q-network")
-    qnet = QNetworkState(state_dim, num_actions).to(DEVICE)
+print("[INFO] Building embedding-based Q-network and value network …")
+qnet = QNetworkEmbed(state_dim, action_embeds).to(DEVICE)
+with torch.no_grad():
+    qnet.action_embeds[:] *= 2.0   # scale initial embeddings for better gradient flow
 
 vnet  = ValueNetwork(state_dim).to(DEVICE)
 opt_q = optim.Adam(qnet.parameters(), lr=IQL_LR_Q)
@@ -134,6 +152,7 @@ mse   = nn.MSELoss()
 
 
 def orthogonality_loss(embeds: torch.Tensor) -> torch.Tensor:
+    """Push policy embeddings to be mutually orthogonal (distinct)."""
     norm = F.normalize(embeds, dim=1)
     gram = norm @ norm.T
     I = torch.eye(len(norm), device=norm.device)
@@ -176,31 +195,25 @@ for epoch in range(1, IQL_EPOCHS + 1):
     q_means, q_stds = [], []
 
     for xb, xnb, ab, rb in batch_iter(X_tr, Xn_tr, a_tr, r_tr, IQL_BATCH_SIZE):
-        if args.mode == "embed":
-            q_sel = qnet(xb, ab)
-        else:
-            q_sel = qnet(xb).gather(1, ab.unsqueeze(1)).squeeze(1)
-
+        q_sel    = qnet(xb, ab)
         v_next   = vnet(xnb)
         v_vals   = vnet(xb)
         target_q = rb + IQL_GAMMA * v_next.detach()
 
-        L_Q = mse(q_sel, target_q)
-        L_V = mse(v_vals, q_sel.detach())
-        L_ortho = 1e-3 * orthogonality_loss(qnet.action_embeds) if args.mode == "embed" else 0.0
-        loss = L_Q + IQL_LAMBDA_V * L_V + L_ortho
+        L_Q     = mse(q_sel, target_q)
+        L_V     = mse(v_vals, q_sel.detach())
+        L_ortho = 1e-3 * orthogonality_loss(qnet.action_embeds)
+        loss    = L_Q + IQL_LAMBDA_V * L_V + L_ortho
 
         opt_q.zero_grad(); opt_v.zero_grad()
         loss.backward()
         opt_q.step(); opt_v.step()
 
         with torch.no_grad():
-            if args.mode == "embed":
-                q_batch = torch.cat(
-                    [qnet(xb, torch.full_like(ab, aid))[:, None] for aid in range(num_actions)], dim=1
-                )
-            else:
-                q_batch = qnet(xb)
+            q_batch = torch.cat(
+                [qnet(xb, torch.full_like(ab, aid))[:, None] for aid in range(num_actions)],
+                dim=1,
+            )
             q_means.append(q_batch.mean().item())
             q_stds.append(q_batch.std().item())
 
@@ -219,25 +232,17 @@ for epoch in range(1, IQL_EPOCHS + 1):
         av   = torch.tensor(a_val, dtype=torch.long, device=DEVICE)
         rv   = torch.tensor(r_val, dtype=torch.float32, device=DEVICE)
 
-        if args.mode == "embed":
-            q_sel_v = qnet(Xv, av)
-        else:
-            q_sel_v = qnet(Xv).gather(1, av.unsqueeze(1)).squeeze(1)
-
-        vv     = vnet(Xv)
-        vv_nxt = vnet(Xnv)
-        LQ_val = mse(q_sel_v, rv + IQL_GAMMA * vv_nxt).item()
-        LV_val = mse(vv, q_sel_v).item()
+        q_sel_v = qnet(Xv, av)
+        vv      = vnet(Xv)
+        vv_nxt  = vnet(Xnv)
+        LQ_val  = mse(q_sel_v, rv + IQL_GAMMA * vv_nxt).item()
+        LV_val  = mse(vv, q_sel_v).item()
         val_loss = LQ_val + IQL_LAMBDA_V * LV_val
 
         policy_means = []
         for aid in range(num_actions):
             at = torch.full((len(Xv),), aid, dtype=torch.long, device=DEVICE)
-            if args.mode == "embed":
-                q_vals = qnet(Xv, at)
-            else:
-                q_vals = qnet(Xv)[:, aid]
-            policy_means.append(q_vals.mean().item())
+            policy_means.append(qnet(Xv, at).mean().item())
         metrics["per_policy_Q"].append(policy_means)
 
     metrics["epoch"].append(epoch)
@@ -296,16 +301,16 @@ axs[1, 1].set_title("Validation Total Loss")
 plt.tight_layout()
 plt.savefig(PLOT_OUT, dpi=300); plt.close()
 
-# Per-policy plot
-policy_arr = np.array(metrics["per_policy_Q"])
+# Per-policy Q-value trajectories
+policy_arr  = np.array(metrics["per_policy_Q"])
 policy_names = list(label_map.keys())
 plt.figure(figsize=(10, 6))
 for i, name in enumerate(policy_names):
     plt.plot(epochs, policy_arr[:, i], label=name)
-plt.title(f"Per-Policy Avg Q ({args.mode} mode)")
+plt.title("Per-Policy Avg Q-value During Training")
 plt.xlabel("Epoch"); plt.ylabel("Avg Q(s,a)")
 plt.legend(); plt.grid(True, ls="--", alpha=0.5); plt.tight_layout()
-plt.savefig(SELECTOR_DIR / f"per_policy_qvalues_{args.mode}.png", dpi=300)
+plt.savefig(SELECTOR_DIR / "per_policy_qvalues.png", dpi=300)
 plt.close()
 
 print(f"\n[OK] Q-network  → {MODEL_Q_OUT}")

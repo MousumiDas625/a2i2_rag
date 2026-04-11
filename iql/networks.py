@@ -4,13 +4,14 @@ networks.py — Shared Neural Network Definitions for IQL
 
 PURPOSE:
     Defines the Q-network and Value-network architectures used for
-    Implicit Q-Learning (IQL).  These classes are imported by the
-    training script (I03) and the runtime policy selector.
+    Implicit Q-Learning (IQL).
 
 ARCHITECTURES:
-    QNetworkState  — State-only: Q(s) → [Q(s,a1), …, Q(s,aN)]
-    QNetworkEmbed  — Embedding-based: Q(s,a) = f([state ‖ emb(a)]) → scalar
-    ValueNetwork   — V(s) → scalar estimate of state value
+    QNetworkEmbed  — Embedding-based Q-network: Q(s,a) = f([state ‖ emb(a)]) → scalar
+                     Each operator policy is represented by a learnable embedding
+                     vector (initialised from its prototype).  The network scores
+                     how well a policy matches the current conversation state.
+    ValueNetwork   — V(s) → scalar baseline estimate of state value
 """
 
 import torch
@@ -24,38 +25,24 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from config.settings import IQL_DROPOUT, IQL_HIDDEN_DIM_Q, IQL_HIDDEN_DIM_V
 
 
-class QNetworkState(nn.Module):
-    """
-    State-only Q-network.
-    Input:  state vector (batch, state_dim)
-    Output: Q-values for all actions (batch, num_actions)
-    """
-
-    def __init__(self, state_dim: int, num_actions: int,
-                 hidden_dim: int = IQL_HIDDEN_DIM_Q,
-                 dropout: float = IQL_DROPOUT):
-        super().__init__()
-        self.net = nn.Sequential(
-            nn.Linear(state_dim, hidden_dim),
-            nn.ReLU(),
-            nn.LayerNorm(hidden_dim),
-            nn.Dropout(dropout),
-            nn.Linear(hidden_dim, hidden_dim),
-            nn.ReLU(),
-            nn.LayerNorm(hidden_dim),
-            nn.Dropout(dropout),
-            nn.Linear(hidden_dim, num_actions),
-        )
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return self.net(x)
-
-
 class QNetworkEmbed(nn.Module):
     """
-    Embedding-based Q-network.
-    Input:  state vector + action_id (used to look up a learnable embedding)
-    Output: scalar Q(s, a)
+    Embedding-based Q-network  Q(s, a) = f( [state ‖ emb(a)] ) → scalar.
+
+    The conversation state `s` is the mean sentence embedding of the last N
+    resident utterances.  Each action `a` (operator policy) is looked up in a
+    learnable embedding table initialised from per-policy prototype vectors.
+    The two representations are concatenated and passed through an MLP that
+    outputs a single Q-value for the (state, policy) pair.
+
+    An orthogonality regularisation term is applied during training to keep
+    the policy embeddings geometrically distinct from each other.
+
+    Parameters
+    ----------
+    state_dim      : Dimensionality of the sentence-embedding state vector.
+    action_embeds  : Tensor of shape (num_policies, embed_dim) — initial
+                     prototype embeddings loaded from operator_prototypes.npy.
     """
 
     def __init__(self, state_dim: int, action_embeds: torch.Tensor,
@@ -64,10 +51,10 @@ class QNetworkEmbed(nn.Module):
         super().__init__()
         self.action_embeds = nn.Parameter(action_embeds, requires_grad=True)
         input_dim = state_dim + action_embeds.shape[1]
-        self.f1 = nn.Linear(input_dim, hidden_dim)
-        self.ln1 = nn.LayerNorm(hidden_dim)
-        self.f2 = nn.Linear(hidden_dim, hidden_dim)
-        self.ln2 = nn.LayerNorm(hidden_dim)
+        self.f1   = nn.Linear(input_dim, hidden_dim)
+        self.ln1  = nn.LayerNorm(hidden_dim)
+        self.f2   = nn.Linear(hidden_dim, hidden_dim)
+        self.ln2  = nn.LayerNorm(hidden_dim)
         self.head = nn.Linear(hidden_dim, 1)
         self.drop = nn.Dropout(dropout)
         nn.init.zeros_(self.head.weight)
@@ -85,9 +72,14 @@ class QNetworkEmbed(nn.Module):
 
 class ValueNetwork(nn.Module):
     """
-    State value network V(s).
-    Input:  state vector (batch, state_dim)
-    Output: scalar value estimate (batch,)
+    State value network  V(s) → scalar.
+
+    Estimates the expected future return from state `s`, used as a Bellman
+    baseline during IQL training.
+
+    Parameters
+    ----------
+    state_dim : Dimensionality of the state vector.
     """
 
     def __init__(self, state_dim: int,

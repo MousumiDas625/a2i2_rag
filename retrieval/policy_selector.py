@@ -8,16 +8,16 @@ PURPOSE:
 
 HOW IT WORKS:
     1. Extract the last N resident utterances from the conversation.
-    2. Embed them with sentence-transformers to form a state vector.
-    3. Feed the state into the Q-network to get Q(s, a) for every policy.
-    4. Return argmax policy name + full Q-value dictionary.
-
-    Runs on GPU for fast inference.
+    2. Embed them with sentence-transformers → mean state vector (384-dim).
+    3. Feed the state into the embedding-based Q-network:
+           Q(s, a) = f( [state_vec ‖ policy_embedding] ) → scalar
+       for every policy a.
+    4. Return the argmax policy name and the full Q-value dictionary.
 
 USAGE (as a library):
     from retrieval.policy_selector import IQLPolicySelector
 
-    selector = IQLPolicySelector(mode="state")
+    selector = IQLPolicySelector()
     best_policy, q_values = selector.select_policy(history)
 """
 
@@ -34,7 +34,7 @@ from config.settings import (
     SELECTOR_DIR, LABEL_MAP_FILE, PROTOTYPES_FILE,
     EMBED_MODEL_NAME, N_LAST_RESIDENT_INFER, DEVICE,
 )
-from iql.networks import QNetworkState, QNetworkEmbed
+from iql.networks import QNetworkEmbed
 
 
 def _embed_state(model: SentenceTransformer, texts: list) -> np.ndarray:
@@ -47,14 +47,13 @@ def _embed_state(model: SentenceTransformer, texts: list) -> np.ndarray:
 
 
 class IQLPolicySelector:
-    def __init__(self, mode: str = "state", n_last: int = N_LAST_RESIDENT_INFER):
+    def __init__(self, n_last: int = N_LAST_RESIDENT_INFER):
         self.device = DEVICE
-        self.mode = mode
         self.n_last = n_last
 
         label_map = json.load(open(LABEL_MAP_FILE))
         self.policy_names = [k for k, _ in sorted(label_map.items(), key=lambda x: x[1])]
-        self.num_actions = len(self.policy_names)
+        self.num_actions  = len(self.policy_names)
 
         if not PROTOTYPES_FILE.exists():
             raise FileNotFoundError(f"Missing {PROTOTYPES_FILE}. Run I02 first.")
@@ -64,25 +63,21 @@ class IQLPolicySelector:
 
         self.embed_model = SentenceTransformer(EMBED_MODEL_NAME, device=str(self.device))
 
-        model_path = SELECTOR_DIR / f"iql_model_{mode}.pt"
+        model_path = SELECTOR_DIR / "iql_model.pt"
         if not model_path.exists():
-            raise FileNotFoundError(f"Missing trained model: {model_path}")
+            raise FileNotFoundError(f"Missing trained model: {model_path}. Run I03 first.")
 
-        state_dim = self.embed_model.get_sentence_embedding_dimension()
-        if mode == "embed":
-            self.qnet = QNetworkEmbed(state_dim, action_embeds).to(self.device)
-        else:
-            self.qnet = QNetworkState(state_dim, self.num_actions).to(self.device)
-
+        state_dim  = self.embed_model.get_sentence_embedding_dimension()
+        self.qnet  = QNetworkEmbed(state_dim, action_embeds).to(self.device)
         self.qnet.load_state_dict(
             torch.load(model_path, map_location=self.device, weights_only=True)
         )
         self.qnet.eval()
-        print(f"[IQLPolicySelector] Loaded ({mode}) on {self.device}")
+        print(f"[IQLPolicySelector] Loaded on {self.device}")
 
     def select_policy(self, history: list) -> tuple:
         """
-        Select the best operator policy.
+        Select the best operator policy for the current conversation state.
 
         Parameters
         ----------
@@ -94,19 +89,16 @@ class IQLPolicySelector:
         (best_policy_name, {policy_name: q_value, ...})
         """
         res_texts = [h["text"] for h in history if h["role"] == "resident"]
-        last_n = res_texts[-self.n_last:] if res_texts else []
+        last_n    = res_texts[-self.n_last:] if res_texts else []
 
         state_vec = _embed_state(self.embed_model, last_n)
-        state_t = torch.tensor(state_vec, dtype=torch.float32, device=self.device).unsqueeze(0)
+        state_t   = torch.tensor(state_vec, dtype=torch.float32, device=self.device).unsqueeze(0)
 
         with torch.no_grad():
-            if self.mode == "embed":
-                q_values = np.array([
-                    self.qnet(state_t, torch.tensor([a], dtype=torch.long, device=self.device)).item()
-                    for a in range(self.num_actions)
-                ])
-            else:
-                q_values = self.qnet(state_t).cpu().numpy().flatten()
+            q_values = np.array([
+                self.qnet(state_t, torch.tensor([a], dtype=torch.long, device=self.device)).item()
+                for a in range(self.num_actions)
+            ])
 
         best_idx = int(np.argmax(q_values))
         return self.policy_names[best_idx], dict(zip(self.policy_names, q_values.tolist()))

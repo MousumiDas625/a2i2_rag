@@ -7,14 +7,18 @@ This project trains an **Implicit Q-Learning (IQL)** policy selector that learns
 ## Table of Contents
 
 1. [Prerequisites](#prerequisites)
-2. [Project Structure](#project-structure)
-3. [Pipeline Overview](#pipeline-overview)
-4. [How to Run](#how-to-run)
-5. [Experiments](#experiments)
-6. [Where to Find Outputs & Evaluation](#where-to-find-outputs--evaluation)
-7. [Switching LLM Providers](#switching-llm-providers)
-8. [Interactive Mode](#interactive-mode)
-9. [API Server](#api-server)
+2. [Environment Setup (uv)](#environment-setup-uv)
+3. [OpenAI API Key](#openai-api-key)
+4. [Project Structure](#project-structure)
+5. [Pipeline Overview](#pipeline-overview)
+6. [How to Run](#how-to-run)
+7. [Running on Endeavour (SLURM)](#running-on-endeavour-slurm)
+8. [Success Rate Matrices](#success-rate-matrices)
+9. [Where to Find Outputs](#where-to-find-outputs)
+10. [IQL Embed Mode](#iql-embed-mode)
+11. [Switching LLM Providers](#switching-llm-providers)
+12. [Interactive Mode](#interactive-mode)
+13. [API Server](#api-server)
 
 ---
 
@@ -22,23 +26,74 @@ This project trains an **Implicit Q-Learning (IQL)** policy selector that learns
 
 | Requirement | Details |
 |---|---|
-| **Python** | 3.10+ (tested with 3.12) |
-| **Conda env** | `a2i2` — already has all dependencies |
-| **Ollama** | Running locally with `llama3` pulled |
-| **GPU** | CUDA or Apple MPS (auto-detected; falls back to CPU) |
+| **Python** | 3.10+ |
+| **uv** | Fast Python package manager — installed by `slurm/setup_env.sh` |
+| **OpenAI API key** | For LLM calls during experiments (see below) |
+| **GPU** | CUDA (cluster) or Apple MPS (local) — auto-detected; falls back to CPU |
+| **curl** | For installing uv (pre-installed on all Linux systems) |
 
-Activate the environment:
+> **Ollama alternative**: If you prefer running a local LLM instead of OpenAI, install Ollama, pull `llama3`, run `ollama serve`, and set `LLM_PROVIDER=ollama` (see [Switching LLM Providers](#switching-llm-providers)).
+
+---
+
+## Environment Setup (uv)
+
+[uv](https://github.com/astral-sh/uv) is a fast, self-contained Python package manager — no conda or system Python required.
+
+### Local machine (macOS / Linux)
 
 ```bash
-conda activate a2i2
+# 1. Install uv
+curl -LsSf https://astral.sh/uv/install.sh | sh
+export PATH="$HOME/.local/bin:$PATH"     # add to ~/.zshrc or ~/.bashrc permanently
+
+# 2. Create the virtual environment
+cd /path/to/a2i2_final
+uv venv .venv --python 3.10
+source .venv/bin/activate
+
+# 3. Install dependencies
+uv pip install torch                     # CPU torch is fine for local dev
+uv pip install -r requirements.txt
+
+# 4. Activate whenever you work on the project
+source .venv/bin/activate
 ```
 
-Make sure Ollama is running (needed only for experiments/simulation):
+### Endeavour HPC cluster
+
+Run the one-time setup script **on a login node** before submitting any SLURM jobs:
 
 ```bash
-ollama serve          # in a separate terminal
-ollama pull llama3    # one-time download
+cd /project2/biyik_1165/mousumid/a2i2_new/A2I2_Chatbot/a2i2_final
+bash slurm/setup_env.sh
 ```
+
+This script automatically:
+- Downloads and installs `uv` to `~/.local/bin/`
+- Creates `.venv/` with Python 3.10
+- Installs PyTorch with CUDA 12.1 support
+- Installs all dependencies and replaces `faiss-cpu` with `faiss-gpu`
+- Verifies CUDA is visible to PyTorch
+
+You only need to run this **once**. All SLURM job scripts then activate `.venv` automatically.
+
+---
+
+## OpenAI API Key (optional — only if not using Ollama)
+
+If you prefer OpenAI over Ollama, follow these steps:
+
+1. Go to [platform.openai.com](https://platform.openai.com) → sign in → **API keys** → **Create new secret key**. Copy the key (`sk-proj-...`).
+2. Add billing at **Billing** → add a payment method. Estimated cost for all experiments: **$5–10** using `gpt-4o-mini`.
+3. Set it on the cluster:
+
+```bash
+echo 'export OPENAI_API_KEY="sk-proj-..."' >> ~/.bashrc
+source ~/.bashrc
+```
+
+Then in each `slurm/run_exp*.sh`, comment out the Ollama block and uncomment the OpenAI block (see [Running on Endeavour](#running-on-endeavour-slurm)).
 
 ---
 
@@ -48,23 +103,23 @@ ollama pull llama3    # one-time download
 a2i2_final/
 ├── config/
 │   ├── settings.py          # All paths, hyperparameters, device, LLM config
-│   └── personas.py          # Resident persona definitions (10 personas)
+│   └── personas.py          # 10 resident persona definitions
 │
 ├── preprocessing/            # STAGE 1: Data preparation
-│   ├── P01_xlsx_to_jsonl.py  # Convert raw XLSX transcripts → JSONL
-│   ├── P02_clean_and_merge.py# Drop Julie, merge consecutive turns, normalize
-│   ├── P03_extract_residents.py # Discover unique resident names
-│   └── P04_add_rewards.py    # Add reward=1 to last resident turn per dialogue
+│   ├── P01_xlsx_to_jsonl.py
+│   ├── P02_clean_and_merge.py
+│   ├── P03_extract_residents.py
+│   └── P04_add_rewards.py
 │
 ├── iql/                      # STAGE 2: IQL training pipeline
-│   ├── networks.py           # Q-network & V-network architectures (PyTorch)
-│   ├── I01_build_iql_dataset.py   # Build (state, action, reward) tuples
-│   ├── I02_build_operator_policies.py # Compute per-resident policy prototypes
-│   ├── I03_train_iql.py      # Train IQL Q-network and V-network
-│   ├── I04_build_rag_indexes.py   # Build per-policy FAISS indexes
-│   └── I05_extract_successful_utterances.py # Build global successful-ops corpus
+│   ├── networks.py
+│   ├── I01_build_iql_dataset.py
+│   ├── I02_build_operator_policies.py
+│   ├── I03_train_iql.py
+│   ├── I04_build_rag_indexes.py
+│   └── I05_extract_successful_utterances.py
 │
-├── retrieval/                # Runtime inference modules
+├── retrieval/
 │   ├── policy_selector.py    # Load trained IQL model, select best policy
 │   └── rag_retrieval.py      # Retrieve few-shot examples from FAISS
 │
@@ -76,229 +131,404 @@ a2i2_final/
 │   ├── conversation_loop.py  # Core turn-by-turn simulation loop
 │   └── interactive.py        # Interactive console mode
 │
-├── experiments/              # STAGE 3 & 4: Run and evaluate experiments
-│   ├── exp1_zero_shot.py     # Experiment 1: Zero-shot baseline
-│   ├── exp2_rag_successful.py # Experiment 2: RAG over successful operators
-│   ├── exp3_iql_policy.py    # Experiment 3: IQL policy selection + RAG
-│   ├── batch_runner.py       # Run all experiments in batch
-│   └── evaluate.py           # Compare results across experiments
+├── experiments/              # STAGE 3 & 4: Run and evaluate
+│   ├── exp1_zero_shot.py
+│   ├── exp2_rag_successful.py
+│   ├── exp3_iql_policy.py
+│   ├── batch_runner.py
+│   ├── evaluate.py           # Side-by-side comparison table + CSV
+│   └── make_success_matrices.py  # Per-experiment success matrices + heatmaps
+│
+├── slurm/                    # Endeavour HPC job scripts
+│   ├── setup_env.sh          # One-time environment setup (run on login node)
+│   ├── submit_all.sh         # Submit all 3 jobs + matrix job in one command
+│   ├── run_exp1_zero_shot.sh
+│   ├── run_exp2_rag.sh
+│   └── run_exp3_iql.sh
 │
 ├── api/
-│   └── server.py             # FastAPI server with /chat, /simulate endpoints
+│   └── server.py
 │
 ├── data/                     # All generated data (created by the pipeline)
-│   ├── raw_xlsx/             # Source: 104 XLSX transcription files
-│   ├── jsonl/                # Stage 1 output: per-dialogue JSONL
-│   ├── cleaned/              # Stage 1 output: cleaned/merged dialogues
-│   ├── meta/                 # residents.json (unique resident list)
-│   ├── reports/              # Processing reports
-│   ├── iql/                  # Stage 2 output: dataset + trained models
-│   │   ├── iql_dataset.jsonl
-│   │   ├── label_map.json
-│   │   ├── config.json
+│   ├── raw_xlsx/
+│   ├── jsonl/
+│   ├── cleaned/
+│   ├── meta/
+│   ├── reports/
+│   ├── iql/
 │   │   └── selector/         # Trained model weights + plots
-│   ├── indexes/              # FAISS indexes + policy prototypes
+│   ├── indexes/
 │   │   ├── policies/
 │   │   └── faiss/
-│   ├── successful_ops/       # Successful operator utterance corpus
-│   └── runs/                 # Experiment results (per-run logs + summaries)
+│   ├── successful_ops/
+│   └── runs/                 # Experiment results + success matrices
 │
-├── run_pipeline.sh           # One-command full pipeline script
-└── requirements.txt          # Python dependencies
+├── .venv/                    # Virtual environment (created by setup_env.sh)
+├── run_pipeline.sh
+└── requirements.txt
 ```
+
+### Resident Personas
+
+| Persona | Has Training Data | Description |
+|---|---|---|
+| bob | **Yes** | Stubborn, prioritizes work over safety |
+| niki | **Yes** | Cooperative, willing to follow instructions |
+| lindsay | **Yes** | Caregiver responsible for children |
+| michelle | **Yes** | Stubborn, determined to protect property |
+| ross | **Yes** | Van driver helping evacuate elderly people |
+| mary | No | Elderly person living alone with a pet |
+| ben | No | Young professional working from home |
+| ana | No | Caregiver at a senior center |
+| tom | No | Community-connected, wants to help others first |
+| mia | No | Teen student absorbed in a school robotics project |
+
+The 5 "trained" personas have human-collected dialogues used for IQL training. The 5 "extended" personas are LLM-simulated and test generalization.
 
 ---
 
 ## Pipeline Overview
 
-The pipeline has **4 stages**. Stages 1 and 2 are offline (data processing + training). Stages 3 and 4 require Ollama running.
-
 ### Stage 1: Preprocessing (P01–P04)
 
-| Script | What it does | Output |
-|---|---|---|
-| `P01_xlsx_to_jsonl.py` | Reads 104 raw XLSX transcripts, converts each to JSONL | `data/jsonl/` |
-| `P02_clean_and_merge.py` | Drops Julie turns, normalizes text, merges consecutive same-role turns | `data/cleaned/` |
-| `P03_extract_residents.py` | Finds unique resident names across all dialogues | `data/meta/residents.json` |
-| `P04_add_rewards.py` | Assigns reward=1 to the last resident turn per dialogue (evacuation success signal) | Updates `data/cleaned/` in-place |
+| Script | Output |
+|---|---|
+| `P01_xlsx_to_jsonl.py` | `data/jsonl/` |
+| `P02_clean_and_merge.py` | `data/cleaned/` |
+| `P03_extract_residents.py` | `data/meta/residents.json` |
+| `P04_add_rewards.py` | Updates `data/cleaned/` in-place |
 
 ### Stage 2: IQL Pipeline (I01–I05)
 
 | Script | What it does | Output |
 |---|---|---|
 | `I01_build_iql_dataset.py` | Encodes states via sentence embeddings, builds (state, action, reward) tuples | `data/iql/iql_dataset.jsonl` |
-| `I02_build_operator_policies.py` | Computes per-resident operator policy prototypes (centroid embeddings) | `data/indexes/policies/` |
-| `I03_train_iql.py` | Trains Q-network and V-network with Bellman updates + early stopping | `data/iql/selector/*.pt` |
+| `I02_build_operator_policies.py` | Computes per-policy prototype embeddings (centroid of each operator's utterances) | `data/indexes/policies/` |
+| `I03_train_iql.py` | Trains embedding-based Q-network and V-network (see [IQL Embed Mode](#iql-embed-mode)) | `data/iql/selector/*.pt` |
 | `I04_build_rag_indexes.py` | Builds per-policy FAISS indexes for few-shot RAG retrieval | `data/indexes/faiss/` |
 | `I05_extract_successful_utterances.py` | Builds a global corpus of operator utterances from successful dialogues | `data/successful_ops/` |
 
-### Stage 3: Experiments (exp1–exp3)
+### Stage 3: Experiments
 
 | Experiment | Strategy | Description |
 |---|---|---|
-| **Exp 1: Zero-Shot** | `zero_shot` | LLM generates operator responses with no training data — pure instruction following |
-| **Exp 2: RAG-Successful** | `rag_successful` | Retrieves similar utterances from ALL successful operators as few-shot examples |
-| **Exp 3: IQL + RAG** | `iql_rag` | IQL selects the best policy, then RAG retrieves from that policy's index |
+| **Exp 1** | `zero_shot` | No training data — pure instruction following |
+| **Exp 2** | `rag_successful` | Retrieves from global successful-operator corpus |
+| **Exp 3** | `iql_rag` | IQL selects best policy → RAG from that policy's index |
 
 ### Stage 4: Evaluation
 
-`evaluate.py` reads the `summary.json` from each experiment and prints a comparison table + writes `data/runs/comparison.csv`.
+`evaluate.py` prints a comparison table and writes `data/runs/comparison.csv`.
+`make_success_matrices.py` generates per-experiment run-level matrices (see below).
 
 ---
 
 ## How to Run
 
-### Option A: Run the full pipeline (one command)
+### Option A: Full pipeline (one command)
 
 ```bash
-conda activate a2i2
-cd /Users/mousumi/biyik_1165/a2i2_new/A2I2_Chatbot/a2i2_final
+source .venv/bin/activate
+cd /path/to/a2i2_final
 
-# Make sure Ollama is serving llama3 in another terminal
+export LLM_PROVIDER=openai
+export OPENAI_API_KEY="sk-..."
+
 bash run_pipeline.sh
 ```
 
-### Option B: Run step by step
+### Option B: Step by step
 
 ```bash
-conda activate a2i2
-cd /Users/mousumi/biyik_1165/a2i2_new/A2I2_Chatbot/a2i2_final
+source .venv/bin/activate
+cd /path/to/a2i2_final
 
-# ── Stage 1: Preprocessing ──
+export LLM_PROVIDER=openai
+export OPENAI_API_KEY="sk-..."
+
+# Stage 1
 python preprocessing/P01_xlsx_to_jsonl.py
 python preprocessing/P02_clean_and_merge.py
 python preprocessing/P03_extract_residents.py
 python preprocessing/P04_add_rewards.py
 
-# ── Stage 2: IQL Training ──
+# Stage 2
 python iql/I01_build_iql_dataset.py
 python iql/I02_build_operator_policies.py
-python iql/I03_train_iql.py --mode state    # or --mode embed
+python iql/I03_train_iql.py
 python iql/I04_build_rag_indexes.py
 python iql/I05_extract_successful_utterances.py
 
-# ── Stage 3: Run Experiments (requires Ollama) ──
+# Stage 3 (5 runs each)
 python experiments/exp1_zero_shot.py --runs 5
 python experiments/exp2_rag_successful.py --runs 5
-python experiments/exp3_iql_policy.py --runs 5 --mode state
+python experiments/exp3_iql_policy.py --runs 5
 
-# ── Stage 4: Evaluation ──
+# Stage 4
 python experiments/evaluate.py
+python experiments/make_success_matrices.py
 ```
 
-### Experiment options
-
-All experiment scripts accept:
+### Experiment flags
 
 | Flag | Default | Description |
 |---|---|---|
-| `--residents` | all | Comma-separated resident names (e.g. `bob,ross`) |
-| `--runs` | 5 | Number of conversations per resident |
-| `--max-turns` | 16 | Max turns before forced stop |
-| `--seed` | "Hello, this is the fire department..." | Opening operator line |
-| `--mode` (exp3 only) | state | IQL Q-network mode: `state` or `embed` |
+| `--residents` | all 10 | Comma-separated names, e.g. `bob,ross` |
+| `--runs` | 5 | Conversations per resident |
+| `--max-turns` | 16 | Hard turn limit |
+| `--seed` | "Hello, this is the fire department…" | Opening operator line |
 
 ---
 
-## Where to Find Outputs & Evaluation
+## Running on Endeavour (SLURM)
 
-### Training Artifacts
+### Step 1 — One-time setup (login node)
+
+Run this **once** before submitting any jobs. It installs `uv`, creates the venv, installs all Python dependencies, downloads the Ollama binary, and pulls the llama3 model (~4.7 GB) into project space:
+
+```bash
+cd /project2/biyik_1165/mousumid/a2i2_new/A2I2_Chatbot/a2i2_final
+bash slurm/setup_env.sh
+```
+
+What happens under the hood:
+- `uv` → `~/.local/bin/uv`
+- Python 3.10 venv → `a2i2_final/.venv/`
+- Ollama binary → `a2i2_final/.ollama/ollama`
+- llama3 model weights → `/project2/biyik_1165/mousumid/a2i2_new/ollama_models/`
+  *(project space, not home directory quota)*
+- Shared config → `slurm/ollama_env.sh` (read by job scripts automatically)
+
+### Step 2 — Fill in your account in each SLURM script
+
+Open each `slurm/run_exp*.sh` and replace `<YOUR_ACCOUNT>` and `<YOUR_EMAIL>`:
+
+```bash
+#SBATCH --account=ttrojan_123       # find yours with: myquota
+#SBATCH --mail-user=you@usc.edu
+```
+
+### Step 3 — Submit everything
+
+```bash
+bash slurm/submit_all.sh
+```
+
+This submits all three experiments **in parallel**, then automatically queues `make_success_matrices.py` with `--dependency=afterok` so it only runs once all three finish.
+
+### How Ollama runs inside each job
+
+Each SLURM script sources `slurm/lib_ollama.sh` and calls `ollama_start`, which:
+
+1. Picks a free port (avoids collisions if two jobs land on the same node)
+2. Starts `ollama serve` as a background process — **uses the compute node's GPU** automatically via `CUDA_VISIBLE_DEVICES`
+3. Waits up to 90 seconds for the server to be ready
+4. Exports `OLLAMA_URL` so `llm_client.py` finds it
+5. Registers a `trap` so `ollama stop` is called on job exit (clean or error)
+
+Ollama server logs are written to `slurm/logs/ollama_<jobid>.log`.
+
+### Monitor
+
+```bash
+squeue -u $USER                              # see running/queued jobs
+tail -f slurm/logs/exp1_<jobid>.out         # stream experiment output
+tail -f slurm/logs/ollama_<jobid>.log       # stream Ollama server log
+```
+
+### GPU usage
+
+Each job requests `--gres=gpu:1`. The GPU is used by:
+
+| Component | Usage |
+|---|---|
+| **Ollama / llama3** | LLM inference for operator + resident utterances (primary GPU load) |
+| **Sentence-transformer** | Embedding resident utterances for RAG + IQL state encoding |
+| **IQL Q-network** (Exp 3) | Policy selection inference |
+| **FAISS-GPU** | Nearest-neighbour retrieval from policy indexes |
+
+### Switching to OpenAI instead of Ollama
+
+If you prefer the OpenAI API (no GPU needed for LLM, lower latency), comment out the Ollama block in each job script and uncomment the OpenAI block:
+
+```bash
+# In slurm/run_exp1_zero_shot.sh (and exp2, exp3):
+
+# Comment out:
+# source "$(dirname "${BASH_SOURCE[0]}")/lib_ollama.sh"
+# ollama_start
+
+# Uncomment:
+export LLM_PROVIDER=openai
+export OPENAI_API_KEY="sk-..."     # or set in ~/.bashrc
+export OPENAI_MODEL="gpt-4o-mini"
+```
+
+---
+
+## Success Rate Matrices
+
+After all experiments complete, generate per-experiment matrices:
+
+```bash
+python experiments/make_success_matrices.py
+```
+
+Output in `data/runs/matrices_<timestamp>/`:
+
+| File | Contents |
+|---|---|
+| `zero_shot_matrix.csv` | Rows = residents, Columns = Run1…Run5, cells = 0/1 |
+| `rag_successful_matrix.csv` | Same format for Exp 2 |
+| `iql_policy_matrix.csv` | Same format for Exp 3 |
+| `zero_shot_matrix.png` | Colour heatmap (green=success, red=fail) |
+| `rag_successful_matrix.png` | Same for Exp 2 |
+| `iql_policy_matrix.png` | Same for Exp 3 |
+
+Console output example:
+
+```
+══════════════════════════════════════════════════════════════
+  SUCCESS MATRIX — ZERO-SHOT
+══════════════════════════════════════════════════════════════
+  Resident        Run 1   Run 2   Run 3   Run 4   Run 5   Rate
+  ──────────────────────────────────────────────────────────
+  ana                 ✓       ✗       ✓       ✗       ✓    60%
+  bob                 ✗       ✗       ✗       ✓       ✗    20%
+  ...
+```
+
+You can also pass explicit summary paths:
+
+```bash
+python experiments/make_success_matrices.py \
+    --exp1 data/runs/exp1_zero_shot_20260410T.../summary.json \
+    --exp2 data/runs/exp2_rag_successful_20260410T.../summary.json \
+    --exp3 data/runs/exp3_iql_policy_20260410T.../summary.json
+```
+
+---
+
+## Where to Find Outputs
+
+### Training artifacts
 
 | Artifact | Path |
 |---|---|
-| Trained Q-network (state mode) | `data/iql/selector/iql_model_state.pt` |
-| Trained Q-network (embed mode) | `data/iql/selector/iql_model_embed.pt` |
-| Trained V-network (state mode) | `data/iql/selector/value_model_state.pt` |
-| Trained V-network (embed mode) | `data/iql/selector/value_model_embed.pt` |
-| Training loss curves (state) | `data/iql/selector/training_curves_state.png` |
-| Training loss curves (embed) | `data/iql/selector/training_curves_embed.png` |
-| Per-policy Q-values (state) | `data/iql/selector/per_policy_qvalues_state.png` |
-| Per-policy Q-values (embed) | `data/iql/selector/per_policy_qvalues_embed.png` |
-| IQL dataset | `data/iql/iql_dataset.jsonl` (383 samples) |
-| Label map | `data/iql/label_map.json` |
+| Trained Q-network | `data/iql/selector/iql_model.pt` |
+| Trained V-network | `data/iql/selector/value_model.pt` |
+| Training loss curves | `data/iql/selector/training_curves.png` |
+| Per-policy Q-values | `data/iql/selector/per_policy_qvalues.png` |
+| IQL dataset | `data/iql/iql_dataset.jsonl` |
 
-### Experiment Results
-
-Each experiment run creates a timestamped folder under `data/runs/`:
+### Experiment results
 
 ```
 data/runs/
-├── exp1_zero_shot_20260408T.../
-│   └── summary.json              # Per-resident success rates + individual run details
-├── exp2_rag_successful_20260408T.../
-│   └── summary.json
-├── exp3_iql_policy_20260408T.../
-│   └── summary.json
-└── comparison.csv                # Side-by-side comparison of all 3 experiments
+├── exp1_zero_shot_<timestamp>/summary.json
+├── exp2_rag_successful_<timestamp>/summary.json
+├── exp3_iql_policy_<timestamp>/summary.json
+├── comparison.csv
+└── matrices_<timestamp>/
+    ├── zero_shot_matrix.csv / .png
+    ├── rag_successful_matrix.csv / .png
+    └── iql_policy_matrix.csv / .png
 ```
-
-Each `summary.json` contains:
-- `per_resident`: success counts and rates per resident
-- `overall_success_rate`: aggregate success rate
-- `results[]`: individual run details (status, turns, transcript path)
-
-### Evaluation
-
-Run `python experiments/evaluate.py` after all three experiments to get a printed comparison table and `data/runs/comparison.csv`.
 
 ---
 
 ## Switching LLM Providers
 
-The default is **Ollama with llama3**. To switch to OpenAI GPT (or any compatible API):
-
-### Via environment variables (recommended):
+### OpenAI (recommended for cluster)
 
 ```bash
 export LLM_PROVIDER=openai
-export OPENAI_API_KEY=sk-...
-export LLM_MODEL=gpt-4o
-# Then run experiments normally
+export OPENAI_API_KEY="sk-..."
+export OPENAI_MODEL="gpt-4o-mini"    # or gpt-4o
 ```
 
-### Via config/settings.py:
+### Ollama (local machine)
 
-Edit `config/settings.py` and change:
+```bash
+ollama pull llama3
+ollama serve                          # keep running in a separate terminal
 
-```python
-LLM_PROVIDER = "openai"
-OPENAI_API_KEY = "sk-..."
-OPENAI_MODEL = "gpt-4o"
+export LLM_PROVIDER=ollama
+export OLLAMA_URL="http://localhost:11434/api/generate"
+export OLLAMA_MODEL="llama3"
 ```
 
-The `simulation/llm_client.py` module dispatches calls to the right backend automatically.
+### Via `config/settings.py`
+
+Edit `LLM_PROVIDER`, `OPENAI_MODEL`, etc. directly in `config/settings.py`.
+Environment variables always override the file values.
 
 ---
 
 ## Interactive Mode
 
-For human-in-the-loop conversations:
-
 ```bash
+source .venv/bin/activate
 python simulation/interactive.py
 ```
 
-This starts a console session where you can play as either the operator or the resident while the LLM handles the other role.
+Starts a console session where you play as the operator and the LLM simulates the resident (or vice versa).
 
 ---
 
 ## API Server
 
-Start the FastAPI server:
-
 ```bash
+source .venv/bin/activate
 python api/server.py
 # or: uvicorn api.server:app --host 0.0.0.0 --port 8001
 ```
-
-Available endpoints:
 
 | Endpoint | Method | Description |
 |---|---|---|
 | `/health` | GET | Health check |
 | `/personas` | GET | List available resident personas |
-| `/chat` | POST | Single-turn resident response given conversation history |
-| `/simulate` | POST | Run a full multi-turn simulation |
+| `/chat` | POST | Single-turn resident response |
+| `/simulate` | POST | Full multi-turn simulation |
+
+---
+
+## IQL Embed Mode
+
+`I03_train_iql.py` trains the Q-network using an **embedding-based** architecture. Here is exactly what happens:
+
+### State representation
+The conversation state `s` is the **mean sentence embedding** (via `all-MiniLM-L6-v2`, 384-dim) of the last N resident utterances. This captures what the resident has been saying recently — their resistance level, concerns, and emotional tone — without any manual feature engineering.
+
+### Policy (action) representations
+Each of the 5 operator policies (bob, niki, ross, michelle, lindsay) is represented by a **learnable 384-dim embedding vector**, initialised from the centroid of all operator utterances in that policy's corpus (the "prototype"). These embeddings are fine-tuned during training so the network learns a geometry where communication styles that work for similar residents end up close together.
+
+### Q-network architecture
+```
+Input: [state_vec (384) ‖ policy_embedding (384)]  →  768-dim
+  Linear(768 → 1024) + ReLU + LayerNorm + Dropout
+  Linear(1024 → 1024) + ReLU + LayerNorm + Dropout
+  Linear(1024 → 1)  →  scalar  Q(s, a)
+```
+A separate lightweight **ValueNetwork** `V(s)` (same MLP structure, 512 hidden) is trained in parallel.
+
+### Training objective
+For each `(state s, policy a, reward r, next_state s')` tuple from the training data:
+
+```
+Bellman target:    y       = r + γ · V(s')
+Q-loss:            L_Q     = MSE( Q(s,a),   y )
+V-loss:            L_V     = MSE( V(s),     Q(s,a).detach() )
+Orthogonality:     L_orth  = mean( (emb·embᵀ - I)² )
+Total loss:        L       = L_Q  +  λ · L_V  +  ε · L_orth
+```
+
+The **orthogonality regularisation** (`L_orth`) pushes the five policy embedding vectors to be geometrically distinct from each other, preventing the model from collapsing all policies to the same representation.
+
+### Inference (at runtime)
+1. Embed the last N resident utterances → `state_vec`
+2. Compute `Q(state_vec, a)` for every policy `a` (5 forward passes)
+3. Return `argmax` policy → operator uses that policy's FAISS index for RAG retrieval
 
 ---
 
@@ -306,8 +536,6 @@ Available endpoints:
 
 - **Dataset**: 104 dialogues, 383 IQL training samples, 5 residents (bob, lindsay, michelle, niki, ross)
 - **Embedding model**: `all-MiniLM-L6-v2` (384-dim)
-- **Device**: MPS (Apple Silicon GPU)
-- **State-mode training**: Early stopped at epoch 40 (best val loss: 0.684 at epoch 20)
 - **Embed-mode training**: Ran full 200 epochs (best val loss: 0.466 at epoch 199)
 - **Successful dialogues**: 98 out of 104 (94.2%)
 - **Successful operator utterances corpus**: 312 utterances with FAISS index

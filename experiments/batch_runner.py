@@ -59,8 +59,6 @@ def main():
                         help="Repetitions per (seed, resident) pair")
     parser.add_argument("--run-id", required=True)
     parser.add_argument("--max-turns", type=int, default=16)
-    parser.add_argument("--mode", choices=["state", "embed"], default="state",
-                        help="IQL mode (only for iql_rag strategy)")
     args = parser.parse_args()
 
     residents = [r.strip().lower() for r in args.residents.split(",")]
@@ -74,7 +72,7 @@ def main():
     selector = None
     if args.strategy == "iql_rag":
         from retrieval.policy_selector import IQLPolicySelector
-        selector = IQLPolicySelector(mode=args.mode)
+        selector = IQLPolicySelector()
 
     master: dict = {"run_id": args.run_id, "timestamp": ts, "results": []}
 

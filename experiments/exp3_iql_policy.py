@@ -14,12 +14,12 @@ PURPOSE:
     it adapts the communication style to the resident's behaviour.
 
 PREREQUISITES:
-    - Full pipeline: P01–P04, I01–I04 must have been run.
-    - Trained IQL model: I03_train_iql.py --mode state (or embed).
+    - Full pipeline: P01–P04, I01–I05 must have been run.
+    - Trained IQL model: iql/I03_train_iql.py
 
 USAGE:
     python experiments/exp3_iql_policy.py
-    python experiments/exp3_iql_policy.py --residents ross,bob --runs 3 --mode state
+    python experiments/exp3_iql_policy.py --residents ross,bob --runs 3
 """
 
 import argparse
@@ -42,8 +42,6 @@ def main():
     parser.add_argument("--residents", default=None)
     parser.add_argument("--runs", type=int, default=5)
     parser.add_argument("--max-turns", type=int, default=16)
-    parser.add_argument("--mode", choices=["state", "embed"], default="state",
-                        help="IQL Q-network mode (default: state)")
     parser.add_argument("--seed", default="Hello, this is the fire department. "
                         "We need you to evacuate immediately.")
     args = parser.parse_args()
@@ -60,13 +58,12 @@ def main():
 
     # Pre-load the IQL selector once (expensive to init)
     print("[INFO] Loading IQL policy selector …")
-    selector = IQLPolicySelector(mode=args.mode)
+    selector = IQLPolicySelector()
 
     all_results: list = []
 
     print("=" * 60)
     print(f"  EXPERIMENT 3 — IQL POLICY SELECTION + RAG")
-    print(f"  Mode: {args.mode}")
     print(f"  Residents: {', '.join(residents)}")
     print(f"  Runs/resident: {args.runs}")
     print("=" * 60)
@@ -85,7 +82,6 @@ def main():
             )
             all_results.append({
                 "experiment": "iql_policy",
-                "mode": args.mode,
                 "resident": resident,
                 "run": run_idx,
                 "status": result["status"],
@@ -96,7 +92,6 @@ def main():
 
     summary = {
         "experiment": "exp3_iql_policy",
-        "mode": args.mode,
         "timestamp": ts,
         "results": all_results,
         "per_resident": {},
