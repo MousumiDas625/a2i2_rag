@@ -7,6 +7,13 @@ Architecture:
     Q(s,a) = V(s) + A(s,a) − mean_a[A(s,a)]
     where A(s,a) = project(encode(s)) · frozen_embed(a)
 
+Key training features:
+    - EMA target V-network for stable Bellman targets
+    - Class-balanced sampling (oversamples minority policies)
+    - Gradient clipping
+    - Gaussian state augmentation
+    - Cosine LR schedule with AdamW
+
 INPUTS:  data/iql/iql_dataset.jsonl, data/iql/label_map.json,
          data/indexes/policies/operator_prototypes.npy
 OUTPUTS: data/iql/selector/iql_model.pt, data/iql/selector/value_model.pt,
@@ -14,8 +21,10 @@ OUTPUTS: data/iql/selector/iql_model.pt, data/iql/selector/value_model.pt,
          iql/plots/training_curves.png, iql/plots/per_policy_qvalues.png
 """
 
+import copy
 import json
 import sys
+from collections import Counter
 from pathlib import Path
 
 import numpy as np
@@ -35,6 +44,7 @@ from config.settings import (
     IQL_WEIGHT_DECAY, IQL_VAL_SPLIT, IQL_GAMMA, IQL_LAMBDA_V,
     IQL_EARLY_STOP_PATIENCE,
     IQL_MARGIN, IQL_MARGIN_WEIGHT, IQL_NOISE_STD,
+    IQL_TARGET_TAU, IQL_GRAD_CLIP,
 )
 from iql.networks import QNetworkEmbed, ValueNetwork
 
@@ -79,8 +89,15 @@ print(f"[INFO] Saved normalization stats → {NORM_OUT}")
 label_map   = json.load(open(LABEL_MAP_FILE))
 num_actions = len(label_map)
 state_dim   = states.shape[1]
+
+# Print class distribution
+act_counts = Counter(actions)
+inv_map = {v: k for k, v in label_map.items()}
 print(f"[INFO] {len(states)} samples | state_dim={state_dim} | "
       f"num_actions={num_actions} | device={DEVICE}")
+print("[INFO] Action distribution:")
+for aid in sorted(act_counts):
+    print(f"  {inv_map[aid]:12s}: {act_counts[aid]:4d} ({100*act_counts[aid]/len(states):.1f}%)")
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Action embeddings (frozen prototypes)
@@ -94,11 +111,17 @@ print(f"[INFO] Loaded {num_actions} frozen operator embeddings "
       f"(dim={action_embeds.shape[1]})")
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Build models
+# Build models + EMA target network
 # ─────────────────────────────────────────────────────────────────────────────
-print("[INFO] Building Dueling-Embed Q-network + ValueNetwork …")
+print("[INFO] Building Dueling-Embed Q-network + ValueNetwork + Target V …")
 qnet  = QNetworkEmbed(state_dim, action_embeds).to(DEVICE)
 vnet  = ValueNetwork(state_dim).to(DEVICE)
+
+# Target V-network: slow-moving copy used for stable Bellman targets
+vnet_target = copy.deepcopy(vnet)
+for p in vnet_target.parameters():
+    p.requires_grad_(False)
+
 opt_q = optim.AdamW(qnet.parameters(), lr=IQL_LR_Q, weight_decay=IQL_WEIGHT_DECAY)
 opt_v = optim.AdamW(vnet.parameters(), lr=IQL_LR_V, weight_decay=IQL_WEIGHT_DECAY)
 sched_q = optim.lr_scheduler.CosineAnnealingLR(opt_q, T_max=IQL_EPOCHS, eta_min=1e-5)
@@ -106,9 +129,22 @@ sched_v = optim.lr_scheduler.CosineAnnealingLR(opt_v, T_max=IQL_EPOCHS, eta_min=
 mse   = nn.MSELoss()
 
 
-def batch_iter(X, X_next, a, r, bs):
+@torch.no_grad()
+def ema_update(target: nn.Module, source: nn.Module, tau: float):
+    """Soft-update target parameters: θ_t ← τ·θ_s + (1−τ)·θ_t"""
+    for tp, sp in zip(target.parameters(), source.parameters()):
+        tp.data.mul_(1.0 - tau).add_(sp.data, alpha=tau)
+
+
+def balanced_batch_iter(X, X_next, a, r, bs):
+    """Yield batches with class-balanced sampling (oversamples minority actions)."""
     n = len(X)
-    idx = np.random.permutation(n)
+    counts = np.bincount(a, minlength=num_actions).astype(np.float64)
+    counts = np.maximum(counts, 1.0)
+    weights = 1.0 / counts[a]
+    weights /= weights.sum()
+
+    idx = np.random.choice(n, size=n, replace=True, p=weights)
     for i in range(0, n, bs):
         j = idx[i : i + bs]
         yield (
@@ -142,22 +178,23 @@ for epoch in range(1, IQL_EPOCHS + 1):
     tot_LQ, tot_LV, tot_Lm, cnt = 0.0, 0.0, 0.0, 0
     q_means, q_stds = [], []
 
-    for xb, xnb, ab, rb in batch_iter(X_tr, Xn_tr, a_tr, r_tr, IQL_BATCH_SIZE):
-        # State augmentation: Gaussian noise prevents overfitting on small dataset
+    for xb, xnb, ab, rb in balanced_batch_iter(X_tr, Xn_tr, a_tr, r_tr, IQL_BATCH_SIZE):
         if IQL_NOISE_STD > 0:
             xb  = xb  + IQL_NOISE_STD * torch.randn_like(xb)
             xnb = xnb + IQL_NOISE_STD * torch.randn_like(xnb)
 
-        q_all    = qnet(xb)                                    # [B, num_actions]
-        q_sel    = q_all.gather(1, ab.unsqueeze(1)).squeeze(1)  # [B]
-        v_next   = vnet(xnb)
+        q_all    = qnet(xb)
+        q_sel    = q_all.gather(1, ab.unsqueeze(1)).squeeze(1)
+
+        # Use TARGET V-network for stable Bellman targets
+        with torch.no_grad():
+            v_next_target = vnet_target(xnb)
         v_vals   = vnet(xb)
-        target_q = rb + IQL_GAMMA * v_next.detach()
+        target_q = rb + IQL_GAMMA * v_next_target
 
         L_Q = mse(q_sel, target_q)
         L_V = mse(v_vals, q_sel.detach())
 
-        # Margin loss: penalise when spread is too small
         q_spread = q_all.max(dim=1).values - q_all.min(dim=1).values
         L_margin = IQL_MARGIN_WEIGHT * torch.clamp(
             IQL_MARGIN - q_spread, min=0.0
@@ -167,7 +204,15 @@ for epoch in range(1, IQL_EPOCHS + 1):
 
         opt_q.zero_grad(); opt_v.zero_grad()
         loss.backward()
+
+        # Gradient clipping
+        nn.utils.clip_grad_norm_(qnet.parameters(), IQL_GRAD_CLIP)
+        nn.utils.clip_grad_norm_(vnet.parameters(), IQL_GRAD_CLIP)
+
         opt_q.step(); opt_v.step()
+
+        # EMA update of target V-network
+        ema_update(vnet_target, vnet, IQL_TARGET_TAU)
 
         with torch.no_grad():
             q_means.append(q_all.mean().item())
@@ -193,7 +238,7 @@ for epoch in range(1, IQL_EPOCHS + 1):
         q_all_v = qnet(Xv)
         q_sel_v = q_all_v.gather(1, av.unsqueeze(1)).squeeze(1)
         vv      = vnet(Xv)
-        vv_nxt  = vnet(Xnv)
+        vv_nxt  = vnet_target(Xnv)
         LQ_val  = mse(q_sel_v, rv + IQL_GAMMA * vv_nxt).item()
         LV_val  = mse(vv, q_sel_v).item()
         val_loss = LQ_val + IQL_LAMBDA_V * LV_val
@@ -240,7 +285,7 @@ print("\n[DEBUG] Average Q-values per policy (full dataset):")
 states_tensor = torch.tensor(states, dtype=torch.float32, device=DEVICE)
 qnet.eval()
 with torch.no_grad():
-    q_full = qnet(states_tensor)     # [N, num_actions]
+    q_full = qnet(states_tensor)
     for i, name in enumerate(label_map.keys()):
         col = q_full[:, i].cpu().numpy()
         print(f"  {name:10s}: mean={col.mean():.4f}  std={col.std():.4f}")
@@ -277,7 +322,6 @@ axs[1, 0].set_title("Avg Q-value (±std)")
 axs[1, 1].plot(epochs, metrics["val_total"], color="tab:red")
 axs[1, 1].set_title("Validation Total Loss")
 
-# Per-policy trajectories (inline)
 policy_arr   = np.array(metrics["per_policy_Q"])
 policy_names = list(label_map.keys())
 for i, name in enumerate(policy_names):
@@ -288,7 +332,6 @@ axs[1, 2].legend(); axs[1, 2].grid(True, ls="--", alpha=0.5)
 plt.tight_layout()
 plt.savefig(PLOT_OUT, dpi=300); plt.close()
 
-# Separate per-policy plot
 plt.figure(figsize=(10, 6))
 for i, name in enumerate(policy_names):
     plt.plot(epochs, policy_arr[:, i], label=name)

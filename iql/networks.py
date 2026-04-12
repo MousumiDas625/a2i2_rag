@@ -52,6 +52,7 @@ class QNetworkEmbed(nn.Module):
         num_actions, action_dim = action_embeds.shape
         self.register_buffer("action_embeds", action_embeds)
 
+        mid_dim = hidden_dim // 2  # 128 when hidden_dim=256
         self.encoder = nn.Sequential(
             nn.Linear(state_dim, hidden_dim),
             nn.ReLU(),
@@ -61,9 +62,13 @@ class QNetworkEmbed(nn.Module):
             nn.ReLU(),
             nn.LayerNorm(hidden_dim),
             nn.Dropout(dropout),
+            nn.Linear(hidden_dim, mid_dim),
+            nn.ReLU(),
+            nn.LayerNorm(mid_dim),
+            nn.Dropout(dropout),
         )
-        self.value_head = nn.Linear(hidden_dim, 1)
-        self.adv_proj   = nn.Linear(hidden_dim, action_dim)
+        self.value_head = nn.Linear(mid_dim, 1)
+        self.adv_proj   = nn.Linear(mid_dim, action_dim)
 
     def forward(self, state: torch.Tensor,
                 action_id: torch.Tensor | None = None) -> torch.Tensor:

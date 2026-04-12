@@ -7,6 +7,10 @@ operator policy at runtime.
 
 Q(s,a) = V(s) + A(s,a) − mean_a[A(s,a)]
 where  A(s,a) = project(encode(s)) · frozen_embed(a)
+
+Uses temperature-based softmax sampling so that when Q-values are close,
+different policies can be explored; when one policy dominates, it is
+almost always selected.
 """
 
 import json
@@ -15,12 +19,14 @@ from pathlib import Path
 
 import numpy as np
 import torch
+from scipy.special import softmax
 from sentence_transformers import SentenceTransformer
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from config.settings import (
     SELECTOR_DIR, LABEL_MAP_FILE, PROTOTYPES_FILE,
     EMBED_MODEL_NAME, N_LAST_RESIDENT_INFER, DEVICE,
+    IQL_INFERENCE_TEMP,
 )
 from iql.networks import QNetworkEmbed
 
@@ -37,9 +43,11 @@ def _embed_state(model: SentenceTransformer, texts: list) -> np.ndarray:
 
 
 class IQLPolicySelector:
-    def __init__(self, n_last: int = N_LAST_RESIDENT_INFER):
+    def __init__(self, n_last: int = N_LAST_RESIDENT_INFER,
+                 temperature: float = IQL_INFERENCE_TEMP):
         self.device = DEVICE
         self.n_last = n_last
+        self.temperature = temperature
 
         label_map = json.load(open(LABEL_MAP_FILE))
         self.policy_names = [k for k, _ in sorted(label_map.items(), key=lambda x: x[1])]
@@ -73,9 +81,21 @@ class IQLPolicySelector:
             self.norm_std  = None
             print("[WARN] norm_stats.npz not found — states will NOT be normalized")
 
-        print(f"[IQLPolicySelector] Loaded Dueling-Embed Q-net on {self.device}")
+        print(f"[IQLPolicySelector] Loaded Dueling-Embed Q-net on {self.device} "
+              f"(temp={self.temperature})")
 
     def select_policy(self, history: list) -> tuple:
+        """
+        Select operator policy given conversation history.
+
+        Uses softmax(Q / temperature) sampling:
+          - Low temperature (→0): nearly argmax (deterministic)
+          - High temperature (→∞): nearly uniform (exploratory)
+          - Default 0.3: strongly prefers highest Q but allows switching
+            when Q-values are close
+
+        Returns (policy_name, {policy: q_value, ...})
+        """
         res_texts = [h["text"] for h in history if h["role"] == "resident"]
         last_n    = res_texts[-self.n_last:] if res_texts else []
 
@@ -88,5 +108,7 @@ class IQLPolicySelector:
         with torch.no_grad():
             q_values = self.qnet(state_t).cpu().numpy().flatten()
 
-        best_idx = int(np.argmax(q_values))
-        return self.policy_names[best_idx], dict(zip(self.policy_names, q_values.tolist()))
+        probs = softmax(q_values / self.temperature)
+        chosen_idx = int(np.random.choice(len(q_values), p=probs))
+
+        return self.policy_names[chosen_idx], dict(zip(self.policy_names, q_values.tolist()))

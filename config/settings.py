@@ -108,6 +108,9 @@ IQL_HIDDEN_DIM_V       = 256
 IQL_MARGIN             = 0.5    # minimum desired spread between best/worst Q
 IQL_MARGIN_WEIGHT      = 0.1    # weight of the margin loss term
 IQL_NOISE_STD          = 0.05   # Gaussian noise injected into states during training
+IQL_TARGET_TAU         = 0.005  # EMA smoothing for target V-network
+IQL_GRAD_CLIP          = 1.0    # max gradient norm
+IQL_INFERENCE_TEMP     = 0.3    # softmax temperature for policy selection
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # DATASET CONFIG
