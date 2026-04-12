@@ -94,20 +94,20 @@ LLM_MODEL = os.environ.get("LLM_MODEL", OLLAMA_MODEL if LLM_PROVIDER == "ollama"
 # IQL TRAINING HYPERPARAMETERS
 # ═══════════════════════════════════════════════════════════════════════════════
 IQL_EPOCHS             = 800
-IQL_BATCH_SIZE         = 8
+IQL_BATCH_SIZE         = 32
 IQL_LR_Q               = 3e-4
 IQL_LR_V               = 1e-4
 IQL_WEIGHT_DECAY       = 1e-4
 IQL_VAL_SPLIT          = 0.2
-IQL_GAMMA              = 0.90
+IQL_GAMMA              = 0.50
 IQL_LAMBDA_V           = 0.3
-IQL_EARLY_STOP_PATIENCE = 80
-IQL_DROPOUT            = 0.15
-IQL_HIDDEN_DIM_Q       = 512
-IQL_HIDDEN_DIM_V       = 256
+IQL_EARLY_STOP_PATIENCE = 30
+IQL_DROPOUT            = 0.25
+IQL_HIDDEN_DIM_Q       = 128
+IQL_HIDDEN_DIM_V       = 128
 IQL_MARGIN             = 0.5    # minimum desired spread between best/worst Q
 IQL_MARGIN_WEIGHT      = 0.1    # weight of the margin loss term
-IQL_NOISE_STD          = 0.05   # Gaussian noise injected into states during training
+IQL_NOISE_STD          = 0.10   # Gaussian noise injected into states during training
 IQL_TARGET_TAU         = 0.005  # EMA smoothing for target V-network
 IQL_GRAD_CLIP          = 1.0    # max gradient norm
 IQL_INFERENCE_TEMP     = 0.3    # softmax temperature for policy selection
