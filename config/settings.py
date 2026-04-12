@@ -94,16 +94,16 @@ LLM_MODEL = os.environ.get("LLM_MODEL", OLLAMA_MODEL if LLM_PROVIDER == "ollama"
 # IQL TRAINING HYPERPARAMETERS
 # ═══════════════════════════════════════════════════════════════════════════════
 IQL_EPOCHS             = 800
-IQL_BATCH_SIZE         = 32
+IQL_BATCH_SIZE         = 8
 IQL_LR_Q               = 3e-4
 IQL_LR_V               = 1e-4
 IQL_WEIGHT_DECAY       = 1e-4
 IQL_VAL_SPLIT          = 0.2
-IQL_GAMMA              = 0.50
+IQL_GAMMA              = 0.90
 IQL_LAMBDA_V           = 0.3
 IQL_EARLY_STOP_PATIENCE = 80
 IQL_DROPOUT            = 0.15
-IQL_HIDDEN_DIM_Q       = 256
+IQL_HIDDEN_DIM_Q       = 512
 IQL_HIDDEN_DIM_V       = 256
 IQL_MARGIN             = 0.5    # minimum desired spread between best/worst Q
 IQL_MARGIN_WEIGHT      = 0.1    # weight of the margin loss term
@@ -126,9 +126,9 @@ K_EXAMPLES        = 2     # ICL few-shot examples per operator turn
 MAX_REFUSAL_STREAK = 5    # consecutive refusals → stop
 
 DEFAULT_TEMPERATURE_OP  = 0.5
-DEFAULT_TEMPERATURE_RES = 0.8
-DEFAULT_MAX_TOKENS_OP   = 32
-DEFAULT_MAX_TOKENS_RES  = 32
+DEFAULT_TEMPERATURE_RES = 0.4
+DEFAULT_MAX_TOKENS_OP   = 64
+DEFAULT_MAX_TOKENS_RES  = 64
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # DECISION JUDGE CONFIG
