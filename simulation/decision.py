@@ -74,13 +74,17 @@ def _build_judge_prompt(
         for u in utterances[-window:]
     )
     return (
-        "Carefully evaluate if the RESIDENT has *actually agreed* or is "
-        "*physically preparing* to evacuate.\n"
-        "- If the resident clearly says they are leaving, packing, "
-        "evacuating, or heading out, reply SUCCESS.\n"
-        "- If the resident hesitates, argues, asks rhetorical questions, "
-        "deflects, or shows doubt, reply FAILURE.\n"
-        "- If you truly cannot tell, reply UNCERTAIN.\n"
+        "Evaluate whether the RESIDENT is moving towards agreement "
+        "to evacuate.\n"
+        "- SUCCESS: The resident agrees, shows willingness, starts "
+        "cooperating, asks practical questions about how/where to go, "
+        "says 'okay', 'alright', 'fine', or indicates they will leave "
+        "even if they still have minor concerns.\n"
+        "- FAILURE: The resident firmly refuses, is hostile, or "
+        "completely dismisses the need to evacuate.\n"
+        "- UNCERTAIN: You truly cannot tell.\n"
+        "A resident does NOT need to be fully enthusiastic — moderate "
+        "agreement or reluctant compliance counts as SUCCESS.\n"
         "Answer with ONE WORD ONLY: SUCCESS, FAILURE, or UNCERTAIN.\n\n"
         f"{snippet}\n\nDecision:"
     )

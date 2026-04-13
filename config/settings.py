@@ -101,10 +101,10 @@ IQL_WEIGHT_DECAY       = 1e-4
 IQL_VAL_SPLIT          = 0.3
 IQL_GAMMA              = 0.70
 IQL_LAMBDA_V           = 0.3
-IQL_EARLY_STOP_PATIENCE = 19
-IQL_DROPOUT            = 0.55
+IQL_EARLY_STOP_PATIENCE = 25
+IQL_DROPOUT            = 0.5
 IQL_HIDDEN_DIM_Q       = 1024
-IQL_HIDDEN_DIM_V       = 1024
+IQL_HIDDEN_DIM_V       = 512
 IQL_MARGIN             = 0.5    # minimum desired spread between best/worst Q
 IQL_MARGIN_WEIGHT      = 0.1    # weight of the margin loss term
 IQL_NOISE_STD          = 0.10   # Gaussian noise injected into states during training
@@ -117,7 +117,7 @@ IQL_INFERENCE_TEMP     = 0.1    # softmax temperature for policy selection
 # DATASET CONFIG
 # ═══════════════════════════════════════════════════════════════════════════════
 N_LAST_RESIDENT_TRAIN = 4   # window used when building the IQL dataset (A04)
-N_LAST_RESIDENT_INFER = 3   # window used at runtime for policy selection
+N_LAST_RESIDENT_INFER = 1   # window used at runtime for policy selection
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # SIMULATION CONFIG
