@@ -94,35 +94,35 @@ LLM_MODEL = os.environ.get("LLM_MODEL", OLLAMA_MODEL if LLM_PROVIDER == "ollama"
 # IQL TRAINING HYPERPARAMETERS
 # ═══════════════════════════════════════════════════════════════════════════════
 IQL_EPOCHS             = 800
-IQL_BATCH_SIZE         = 1
+IQL_BATCH_SIZE         = 32
 IQL_LR_Q               = 1e-4
-IQL_LR_V               = 1e-4
+IQL_LR_V               = 5e-5
 IQL_WEIGHT_DECAY       = 1e-4
-IQL_VAL_SPLIT          = 0.3
-IQL_GAMMA              = 0.70
+IQL_VAL_SPLIT          = 0.2
+IQL_GAMMA              = 0.30
 IQL_LAMBDA_V           = 0.3
-IQL_EARLY_STOP_PATIENCE = 25
-IQL_DROPOUT            = 0.5
-IQL_HIDDEN_DIM_Q       = 1024
-IQL_HIDDEN_DIM_V       = 512
-IQL_MARGIN             = 0.5    # minimum desired spread between best/worst Q
-IQL_MARGIN_WEIGHT      = 0.1    # weight of the margin loss term
+IQL_EARLY_STOP_PATIENCE = 80
+IQL_DROPOUT            = 0.55
+IQL_HIDDEN_DIM_Q       = 512
+IQL_HIDDEN_DIM_V       = 256
+IQL_MARGIN             = 1.0    # minimum desired spread between best/worst Q
+IQL_MARGIN_WEIGHT      = 0.3    # weight of the margin loss term
 IQL_NOISE_STD          = 0.10   # Gaussian noise injected into states during training
-IQL_ORTHO_WEIGHT       = 0.01   # orthogonality regularisation for trainable embeddings
+IQL_ORTHO_WEIGHT       = 0.05   # orthogonality regularisation for trainable embeddings
 IQL_TARGET_TAU         = 0.005  # EMA smoothing for target V-network
 IQL_GRAD_CLIP          = 1.0    # max gradient norm
-IQL_INFERENCE_TEMP     = 0.1    # softmax temperature for policy selection
+IQL_INFERENCE_TEMP     = 0.9    # softmax temperature for policy selection
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # DATASET CONFIG
 # ═══════════════════════════════════════════════════════════════════════════════
-N_LAST_RESIDENT_TRAIN = 4   # window used when building the IQL dataset (A04)
+N_LAST_RESIDENT_TRAIN = 3   # window used when building the IQL dataset (A04)
 N_LAST_RESIDENT_INFER = 1   # window used at runtime for policy selection
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # SIMULATION CONFIG
 # ═══════════════════════════════════════════════════════════════════════════════
-MAX_TURNS         = 16
+MAX_TURNS         = 15
 K_EXAMPLES        = 2     # ICL few-shot examples per operator turn
 MAX_REFUSAL_STREAK = 5    # consecutive refusals → stop
 
@@ -134,7 +134,7 @@ DEFAULT_MAX_TOKENS_RES  = 64
 # ═══════════════════════════════════════════════════════════════════════════════
 # DECISION JUDGE CONFIG
 # ═══════════════════════════════════════════════════════════════════════════════
-DECISION_MIN_TURNS   = 2
+DECISION_MIN_TURNS   = 6
 DECISION_TAIL_WINDOW = 2
 
 # ═══════════════════════════════════════════════════════════════════════════════

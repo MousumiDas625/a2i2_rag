@@ -74,17 +74,15 @@ def _build_judge_prompt(
         for u in utterances[-window:]
     )
     return (
-        "Evaluate whether the RESIDENT is moving towards agreement "
-        "to evacuate.\n"
-        "- SUCCESS: The resident agrees, shows willingness, starts "
-        "cooperating, asks practical questions about how/where to go, "
-        "says 'okay', 'alright', 'fine', or indicates they will leave "
-        "even if they still have minor concerns.\n"
-        "- FAILURE: The resident firmly refuses, is hostile, or "
-        "completely dismisses the need to evacuate.\n"
-        "- UNCERTAIN: You truly cannot tell.\n"
-        "A resident does NOT need to be fully enthusiastic — moderate "
-        "agreement or reluctant compliance counts as SUCCESS.\n"
+        "Evaluate whether the RESIDENT has agreed to evacuate.\n"
+        "- SUCCESS: The resident has accepted the need to leave and is "
+        "preparing or willing to go. They may still have concerns, but "
+        "they are cooperating (e.g. 'okay, let me grab my things', "
+        "'alright, I'll head out', 'fine, where do I go?').\n"
+        "- FAILURE: The resident is still refusing, deflecting, or "
+        "arguing against evacuation without any sign of compliance.\n"
+        "- UNCERTAIN: The resident is on the fence — not refusing but "
+        "not yet agreeing either.\n"
         "Answer with ONE WORD ONLY: SUCCESS, FAILURE, or UNCERTAIN.\n\n"
         f"{snippet}\n\nDecision:"
     )
