@@ -1,0 +1,836 @@
+================================================================================
+  IQL (IMPLICIT Q-LEARNING) POLICY SELECTOR — COMPLETE DOCUMENTATION
+================================================================================
+
+  Project: A2I2 Chatbot — Wildfire Evacuation Dialogue System
+  Component: IQL-based adaptive operator policy selection with per-policy RAG
+
+================================================================================
+  TABLE OF CONTENTS
+================================================================================
+
+  1. HIGH-LEVEL OVERVIEW
+  2. THE PROBLEM IQL SOLVES
+  3. DATA PIPELINE (I01 → I05)
+     3.1  I01 — Build IQL Dataset
+     3.2  I02 — Build Operator Policy Prototypes
+     3.3  I03 — Train the IQL Model
+     3.4  I04 — Build Per-Policy FAISS Indexes
+     3.5  I05 — Extract Successful Operator Utterances
+  4. IQL ALGORITHM — THEORY & EQUATIONS
+     4.1  Background: Q-Learning
+     4.2  Implicit Q-Learning (IQL) Formulation
+     4.3  Dueling Embedding Architecture
+     4.4  Training Objective (Full Loss)
+     4.5  Target Network (EMA)
+     4.6  Class-Balanced Sampling
+     4.7  State Augmentation
+  5. NETWORK ARCHITECTURES
+     5.1  QNetworkEmbed (Dueling-Embed Q-Network)
+     5.2  ValueNetwork
+     5.3  QNetworkState (Fallback)
+  6. TRAINING PROCEDURE
+     6.1  Data Loading & Normalisation
+     6.2  Train/Val Split
+     6.3  Training Loop (Epoch-Level)
+     6.4  Early Stopping
+     6.5  Hyperparameters
+  7. INFERENCE PIPELINE (RUNTIME)
+     7.1  IQLPolicySelector
+     7.2  Policy Selection (Softmax Sampling)
+     7.3  Per-Policy RAG Retrieval
+     7.4  Prompt Construction
+  8. END-TO-END CONVERSATION FLOW
+  9. DECISION JUDGE
+  10. EXPERIMENT RUNNER (exp3_iql_policy.py)
+
+
+================================================================================
+  1. HIGH-LEVEL OVERVIEW
+================================================================================
+
+The system simulates emergency phone calls between an AI operator (trying to
+persuade residents to evacuate during a wildfire) and AI residents (each with
+a unique persona and set of concerns). The goal: get the resident to agree to
+evacuate.
+
+Three experimental strategies are compared:
+
+  Experiment 1 — ZERO-SHOT
+    The operator LLM receives only a generic system prompt. No examples,
+    no policy adaptation.
+
+  Experiment 2 — RAG over SUCCESSFUL operators
+    The operator LLM receives top-K few-shot examples retrieved from a
+    global corpus of successful operator utterances (FAISS cosine search).
+
+  Experiment 3 — IQL + per-policy RAG  ← THIS DOCUMENT
+    A trained IQL Q-network selects the best "operator policy" for the
+    current conversation state. The selected policy's FAISS index provides
+    policy-specific few-shot examples. The prompt also includes the
+    identified concern and specific resources the operator can offer.
+
+
+================================================================================
+  2. THE PROBLEM IQL SOLVES
+================================================================================
+
+Different residents have different concerns:
+  - Bob:      work commitments, doesn't want to be interrupted
+  - Niki:     uncertain about the situation, needs clear direction
+  - Lindsay:  caring for children, needs parental approval
+  - Michelle: protecting property, believes the house is prepared
+  - Ross:     stranded with elderly passengers who have mobility issues
+
+A one-size-fits-all operator prompt fails because:
+  - Generic urgency ("leave now, it's dangerous") doesn't address
+    specific concerns, so the resident pushes back.
+  - Without knowing WHAT to offer, the operator gives vague promises
+    ("help is on the way") that the resident rightly questions.
+
+IQL learns a policy mapping:
+
+    state (what the resident just said) → best operator policy (which
+    resident-type this situation most resembles)
+
+This tells the system: "This resident sounds like they have concerns
+similar to Ross's passengers — offer mobility assistance and transport."
+
+
+================================================================================
+  3. DATA PIPELINE
+================================================================================
+
+The pipeline has 5 preparation scripts, run in order:
+
+  I01 → I02 → I03 (training) → I04 → I05
+
+All paths are configured centrally in config/settings.py.
+
+--------------------------------------------------------------------------------
+  3.1  I01 — Build IQL Dataset  (iql/I01_build_iql_dataset.py)
+--------------------------------------------------------------------------------
+
+PURPOSE:
+  Convert cleaned human dialogues into (state, action, reward) tuples for
+  offline RL training.
+
+INPUT:
+  data/cleaned/*.jsonl  — cleaned dialogues (one JSONL file per dialogue)
+  data/meta/residents.json — list of resident names
+
+OUTPUT:
+  data/iql/iql_dataset.jsonl — one JSON record per training sample
+  data/iql/label_map.json    — {resident_name: action_id}
+  data/iql/config.json       — embedding model, window size, etc.
+
+PROCEDURE:
+  For each operator turn in each cleaned dialogue:
+
+    1. state_text = concatenation of the last N_LAST_RESIDENT_TRAIN=3
+       resident utterances (a sliding window of recent resident speech).
+
+    2. state_vec = SentenceTransformer("all-MiniLM-L6-v2").encode(state_text)
+       This produces a 384-dimensional dense vector.
+
+    3. action_id = label_map[resident_name]
+       The "action" is the resident-specific policy — each of the 5
+       residents defines one policy (bob=0, lindsay=1, michelle=2,
+       niki=3, ross=4).
+
+    4. reward = the reward annotation on the NEXT resident turn.
+       - 0 = neutral (conversation continues)
+       - 1 = positive (resident showed willingness)
+       - 2 = terminal (end of dialogue)
+
+  A terminal record (reward=2) is appended at the end of each dialogue so
+  the Q-network can learn end-of-episode transitions.
+
+  Each record in iql_dataset.jsonl:
+    {
+      "dialogue_id": "...",
+      "resident": "ross",
+      "state_text": "I have passengers who can't move...",
+      "action_id": 4,
+      "reward": 1,
+      "state_vec": [0.023, -0.117, ...]   (384 floats)
+    }
+
+--------------------------------------------------------------------------------
+  3.2  I02 — Build Operator Policy Prototypes  (iql/I02_build_operator_policies.py)
+--------------------------------------------------------------------------------
+
+PURPOSE:
+  Create one "operator policy prototype" per resident. A prototype is a
+  mean embedding vector (centroid) computed from ALL operator utterances
+  directed at that resident across the training dialogues.
+
+INPUT:
+  data/cleaned/*.jsonl
+  data/meta/residents.json
+
+OUTPUT:
+  data/indexes/policies/{name}_pairs.json       — (resident, operator) text pairs
+  data/indexes/policies/{name}_op_embeds.npy    — embeddings of operator texts
+  data/indexes/policies/{name}_prototype.npy    — centroid embedding (1 × 384)
+  data/indexes/policies/operator_prototypes.npy — stacked matrix (5 × 384)
+  data/indexes/policies/policies_meta.json      — metadata
+
+PROCEDURE:
+  For each resident:
+    1. Collect every (resident_text → operator_text) pair from cleaned
+       dialogues where the turns are adjacent.
+    2. Embed all operator_text with SentenceTransformer (GPU-accelerated).
+    3. Compute centroid = mean of all operator embeddings for this resident.
+    4. Save per-resident and stack all centroids into operator_prototypes.npy.
+
+  The prototype matrix (5 × 384) is used as the initial action embeddings
+  in the Q-network. It captures the "average communication style" an
+  operator used with each resident type.
+
+--------------------------------------------------------------------------------
+  3.3  I03 — Train the IQL Model  (iql/I03_train_iql.py)
+--------------------------------------------------------------------------------
+
+  See Section 4 (Algorithm) and Section 6 (Training Procedure) below.
+
+--------------------------------------------------------------------------------
+  3.4  I04 — Build Per-Policy FAISS Indexes  (iql/I04_build_rag_indexes.py)
+--------------------------------------------------------------------------------
+
+PURPOSE:
+  Create a FAISS index for each operator policy so that at runtime, the
+  system can retrieve the most relevant (resident→operator) example pairs
+  for in-context few-shot prompting.
+
+INPUT:
+  data/indexes/policies/policies_meta.json
+  data/indexes/policies/{name}_pairs.json
+
+OUTPUT:
+  data/indexes/faiss/{name}.faiss    — one FAISS index per policy
+  data/indexes/faiss/meta_faiss.json — metadata
+
+PROCEDURE:
+  For each policy (= resident name):
+    1. Load (resident_text, operator_text) pairs from I02.
+    2. Embed all resident_texts with SentenceTransformer (L2-normalised).
+    3. Build a FAISS IndexFlatIP (inner product on normalised vectors =
+       cosine similarity).
+    4. Save the index.
+
+  At runtime, given a resident utterance, we embed it, search the
+  selected policy's FAISS index, and retrieve the top-K most similar
+  historical pairs as few-shot examples.
+
+--------------------------------------------------------------------------------
+  3.5  I05 — Extract Successful Operator Utterances  (iql/I05_extract_successful_utterances.py)
+--------------------------------------------------------------------------------
+
+PURPOSE:
+  Build a global corpus + FAISS index of operator utterances from
+  *successful* dialogues only. This powers Experiment 2 (RAG baseline).
+
+INPUT:
+  data/iql/iql_dataset.jsonl (to identify successful dialogue IDs)
+  data/cleaned/{dialogue_id}.jsonl
+
+OUTPUT:
+  data/successful_ops/utterances.jsonl
+  data/successful_ops/index.faiss
+  data/successful_ops/meta.json
+
+PROCEDURE:
+  1. A dialogue is "successful" if it contains at least one record with
+     reward == 1 (the resident agreed to evacuate at some point).
+  2. Extract every operator turn from those successful dialogues.
+  3. Embed all operator utterances, build a single FAISS IndexFlatIP.
+
+
+================================================================================
+  4. IQL ALGORITHM — THEORY & EQUATIONS
+================================================================================
+
+--------------------------------------------------------------------------------
+  4.1  Background: Q-Learning
+--------------------------------------------------------------------------------
+
+Standard Q-learning learns an action-value function Q(s, a) that estimates
+the expected cumulative discounted reward from taking action a in state s
+and following the optimal policy thereafter:
+
+    Q*(s, a) = E[ r + γ · max_a' Q*(s', a') ]
+
+where:
+    s  = current state
+    a  = current action
+    r  = immediate reward
+    s' = next state
+    γ  = discount factor (gamma)
+
+The Bellman optimality equation is the fixed-point equation that Q* must
+satisfy. Standard online Q-learning updates Q towards this target using
+experience collected by an exploratory policy.
+
+--------------------------------------------------------------------------------
+  4.2  Implicit Q-Learning (IQL) Formulation
+--------------------------------------------------------------------------------
+
+IQL is an OFFLINE reinforcement learning algorithm. Unlike online RL, we
+cannot interact with the environment to collect new data. We learn entirely
+from a fixed dataset of historical dialogues.
+
+The key challenge of offline RL: the max operator in standard Q-learning
+causes overestimation for state-action pairs not well-represented in the
+dataset. IQL avoids this by learning an implicit value function.
+
+IQL decomposes the problem into two networks:
+
+    Q-network: Q(s, a) — estimates the value of taking action a in state s
+    V-network: V(s)    — estimates the value of state s under the data
+                         distribution (no explicit max over actions)
+
+The Q-network is trained with Bellman targets using the V-network for
+next-state values (instead of max_a Q(s', a)):
+
+    L_Q = E[ (Q(s, a) - (r + γ · V_target(s')))² ]
+
+The V-network is trained to approximate Q for the actions taken in the data:
+
+    L_V = E[ (V(s) - Q(s, a))² ]
+
+By using V(s') instead of max_a Q(s', a) in the Bellman target, IQL
+avoids querying Q for out-of-distribution actions, which is the primary
+source of offline RL instability.
+
+The implicit policy is then: π(a|s) ∝ exp(Q(s,a) / temperature), i.e.,
+actions are sampled proportionally to their Q-values via softmax.
+
+--------------------------------------------------------------------------------
+  4.3  Dueling Embedding Architecture
+--------------------------------------------------------------------------------
+
+Instead of a standard Q-network that outputs Q-values via a final linear
+layer, we use a Dueling architecture with embedding-based advantages:
+
+    Q(s, a) = V(s) + A(s, a) - mean_a[A(s, a)]
+
+where:
+    V(s) = value_head(encode(s))           — a scalar baseline
+    A(s, a) = project(encode(s)) · e(a)    — advantage via dot product
+
+Breakdown:
+  1. encode(s): Pass the state vector through a 3-layer MLP encoder
+     (Linear → ReLU → LayerNorm → Dropout, repeated 3×) to produce
+     a hidden representation h ∈ R^{mid_dim}.
+
+  2. V(s) = Linear(h) → R¹: A scalar value head.
+
+  3. project(h) = Linear(h) → R^{action_dim}: Project h into the same
+     space as the action embeddings (384-dimensional).
+
+  4. A(s, a) = project(h) · e(a)^T: Dot product between the projected
+     state and the action embedding for action a. This gives one
+     advantage score per action.
+
+  5. Center the advantages: A(s,a) ← A(s,a) - mean_a[A(s,a)]
+     This ensures the advantages sum to zero and V(s) represents the
+     true state value.
+
+  6. Q(s, a) = V(s) + A_centered(s, a)
+
+Action Embeddings:
+  The action embeddings e(a) are initialised from operator_prototypes.npy
+  (the centroid embeddings from I02) but are declared as nn.Parameter,
+  making them TRAINABLE. During training, backpropagation can push them
+  apart to improve Q-value separation. An orthogonality loss prevents
+  them from collapsing into each other (see below).
+
+Why dot-product advantages?
+  A naive approach concatenates [state || action_emb] and feeds it through
+  an MLP. The problem: the network can learn to ignore the action part
+  entirely, producing identical Q-values for all actions. Dot-product
+  forces a geometric relationship between states and actions — the
+  Q-value for an action depends on how well-aligned the projected state
+  is with that action's embedding direction.
+
+--------------------------------------------------------------------------------
+  4.4  Training Objective (Full Loss)
+--------------------------------------------------------------------------------
+
+The total loss per batch is:
+
+    L = L_Q + λ_V · L_V + L_margin + L_ortho
+
+where:
+
+  L_Q (Bellman loss):
+    L_Q = MSE( Q(s, a), r + γ · V_target(s') )
+
+    This teaches Q to predict the immediate reward plus the discounted
+    next-state value. V_target is the EMA target V-network (see 4.5).
+
+  L_V (Value loss):
+    L_V = MSE( V(s), Q(s, a).detach() )
+
+    This teaches V(s) to match Q for the actions actually taken in the
+    data. The .detach() prevents gradients flowing back through Q into V.
+
+    λ_V = 0.3 (the weight on this loss term)
+
+  L_margin (Spread loss):
+    spread(s) = max_a Q(s,a) - min_a Q(s,a)
+    L_margin = w_margin · mean[ max(margin - spread(s), 0) ]
+
+    This hinge loss ensures the Q-values for different actions are
+    spread apart by at least `margin` (default 1.0). Without it, the
+    Q-values can collapse to similar values, making policy selection
+    meaningless.
+
+    w_margin = 0.3, margin = 1.0
+
+  L_ortho (Orthogonality loss):
+    norm_e = normalise(action_embeds, dim=1)    — L2-normalise each embedding
+    gram = norm_e · norm_e^T                    — cosine similarity matrix
+    L_ortho = w_ortho · mean( (gram - I)² )
+
+    This penalises cosine similarity between action embedding pairs.
+    Since the embeddings are trainable, without this term they could
+    drift towards each other (or all collapse to the same vector),
+    destroying the network's ability to distinguish actions.
+
+    w_ortho = 0.05
+
+--------------------------------------------------------------------------------
+  4.5  Target Network (EMA)
+--------------------------------------------------------------------------------
+
+To stabilise training, the V-network used in the Bellman target (V_target)
+is a slow-moving copy of the V-network, updated via Exponential Moving
+Average (EMA) after every gradient step:
+
+    θ_target ← (1 - τ) · θ_target + τ · θ_V
+
+where τ = 0.005 (IQL_TARGET_TAU).
+
+This prevents the "moving target" problem: if V_target changed rapidly,
+the Q-network's targets would shift every step, causing training
+oscillation. EMA keeps targets smooth.
+
+--------------------------------------------------------------------------------
+  4.6  Class-Balanced Sampling
+--------------------------------------------------------------------------------
+
+The training data is imbalanced — some policies (residents) have more
+samples than others. Naive uniform sampling would cause the network to
+overfit to majority policies.
+
+The balanced batch iterator computes:
+    weight(i) = 1 / count(action[i])
+    weight(i) ← weight(i) / sum(weights)         — normalise to probabilities
+    batch_indices = np.random.choice(N, N, p=weights, replace=True)
+
+This oversamples minority actions proportionally to their inverse
+frequency, ensuring each policy is represented equally across training.
+
+--------------------------------------------------------------------------------
+  4.7  State Augmentation
+--------------------------------------------------------------------------------
+
+Gaussian noise is added to state vectors during training:
+
+    s_noisy = s + ε,   ε ~ N(0, σ²I)
+    s'_noisy = s' + ε', ε' ~ N(0, σ²I)
+
+where σ = IQL_NOISE_STD = 0.10.
+
+This acts as a regulariser, preventing the network from memorising exact
+state vectors and improving generalisation to unseen dialogue states.
+
+
+================================================================================
+  5. NETWORK ARCHITECTURES
+================================================================================
+
+--------------------------------------------------------------------------------
+  5.1  QNetworkEmbed (Dueling-Embed Q-Network)
+--------------------------------------------------------------------------------
+
+  Input:  state ∈ R^{384}  (sentence embedding)
+  Output: Q-values ∈ R^{5} (one per policy/action)
+
+  Architecture:
+
+    action_embeds: nn.Parameter (5 × 384), initialised from prototypes
+
+    encoder: Sequential(
+      Linear(384 → 512), ReLU, LayerNorm(512), Dropout(0.55),
+      Linear(512 → 512), ReLU, LayerNorm(512), Dropout(0.55),
+      Linear(512 → 256), ReLU, LayerNorm(256), Dropout(0.55),
+    )
+    → output h ∈ R^{256}
+
+    value_head: Linear(256 → 1)
+    → output V(s) ∈ R^{1}
+
+    adv_proj: Linear(256 → 384)
+    → project(h) ∈ R^{384}
+
+    advantages = project(h) @ action_embeds.T    → R^{5}
+    advantages = advantages - mean(advantages)   → centred
+
+    Q = V + advantages                           → R^{5}
+
+  Parameters: ~786K trainable
+
+--------------------------------------------------------------------------------
+  5.2  ValueNetwork
+--------------------------------------------------------------------------------
+
+  Input:  state ∈ R^{384}
+  Output: V(s) ∈ R^{1}
+
+  Architecture:
+
+    net: Sequential(
+      Linear(384 → 256), ReLU, LayerNorm(256), Dropout(0.55),
+      Linear(256 → 256), ReLU, LayerNorm(256), Dropout(0.55),
+      Linear(256 → 1),
+    )
+
+  Used for the IQL value function. A slow-moving EMA copy (vnet_target)
+  provides stable Bellman targets.
+
+--------------------------------------------------------------------------------
+  5.3  QNetworkState (Fallback)
+--------------------------------------------------------------------------------
+
+  A simpler state-only Q-network: Q(s) → [Q(s,a1), ..., Q(s,aN)]
+  Retained for comparison but not used in the main pipeline.
+
+  Architecture:
+    Linear(384 → 512) → ReLU → LayerNorm → Dropout
+    Linear(512 → 512) → ReLU → LayerNorm → Dropout
+    Linear(512 → 5)
+
+
+================================================================================
+  6. TRAINING PROCEDURE
+================================================================================
+
+Script: iql/I03_train_iql.py
+
+--------------------------------------------------------------------------------
+  6.1  Data Loading & Normalisation
+--------------------------------------------------------------------------------
+
+  1. Load iql_dataset.jsonl → arrays: states (N×384), actions (N,),
+     rewards (N,), dialogue_ids (N,).
+  2. Compute next-state vectors by shifting states by 1. If the next
+     record belongs to a different dialogue, next_state[i] = state[i]
+     (the episode terminated).
+  3. Z-score normalise states:
+       mean = states.mean(axis=0)
+       std  = states.std(axis=0) + 1e-6
+       states = (states - mean) / std
+       next_states = (next_states - mean) / std
+  4. Save normalisation stats (mean, std) to norm_stats.npz for use
+     during inference.
+
+--------------------------------------------------------------------------------
+  6.2  Train/Val Split
+--------------------------------------------------------------------------------
+
+  80/20 split (IQL_VAL_SPLIT = 0.2, random_state=42).
+  Validation is used for early stopping and monitoring.
+
+--------------------------------------------------------------------------------
+  6.3  Training Loop (Epoch-Level)
+--------------------------------------------------------------------------------
+
+  For each epoch (up to IQL_EPOCHS = 800):
+
+    1. TRAINING PHASE (qnet.train(), vnet.train()):
+       For each mini-batch from balanced_batch_iter:
+         a. Add Gaussian noise to state and next-state vectors.
+         b. Forward pass through Q-network: q_all = qnet(s).
+         c. Select Q-values for taken actions: q_sel = q_all[a].
+         d. Compute target: target_q = r + γ · V_target(s').
+         e. Compute losses:
+            L_Q = MSE(q_sel, target_q)
+            L_V = MSE(V(s), q_sel.detach())
+            L_margin = w_m · max(margin - spread, 0).mean()
+            L_ortho = w_o · orthogonality_loss(action_embeds)
+            L_total = L_Q + λ_V · L_V + L_margin + L_ortho
+         f. Backpropagation.
+         g. Gradient clipping: clip_grad_norm_(params, max_norm=1.0).
+         h. Optimiser step (AdamW for both Q and V).
+         i. EMA update of target V-network.
+
+    2. VALIDATION PHASE (qnet.eval(), vnet.eval()):
+       Compute L_Q and L_V on the held-out set.
+       val_total = L_Q_val + λ_V · L_V_val.
+
+    3. LR SCHEDULE:
+       CosineAnnealingLR for both optimisers (eta_min=1e-5).
+
+    4. LOGGING:
+       Per-epoch: train_LQ, train_LV, L_margin, L_ortho, val_LQ, val_LV,
+       mean Q-value, Q-value std, per-policy Q spread.
+
+    5. CHECKPOINTING:
+       If val_total improves, save qnet and vnet state dicts and reset
+       patience counter.
+
+--------------------------------------------------------------------------------
+  6.4  Early Stopping
+--------------------------------------------------------------------------------
+
+  Patience = IQL_EARLY_STOP_PATIENCE = 80 epochs.
+  If validation loss doesn't improve for 80 consecutive epochs, training
+  stops. The best checkpoint is already saved.
+
+--------------------------------------------------------------------------------
+  6.5  Hyperparameters (all from config/settings.py)
+--------------------------------------------------------------------------------
+
+  IQL_EPOCHS             = 800     max training epochs
+  IQL_BATCH_SIZE         = 16      mini-batch size
+  IQL_LR_Q               = 1e-4   Q-network learning rate
+  IQL_LR_V               = 5e-5   V-network learning rate
+  IQL_WEIGHT_DECAY       = 1e-4   AdamW weight decay
+  IQL_VAL_SPLIT          = 0.2    validation fraction
+  IQL_GAMMA              = 0.30   discount factor
+  IQL_LAMBDA_V           = 0.3    V-loss weight
+  IQL_EARLY_STOP_PATIENCE = 80    patience for early stopping
+  IQL_DROPOUT            = 0.55   dropout rate
+  IQL_HIDDEN_DIM_Q       = 512    Q-network hidden dimension
+  IQL_HIDDEN_DIM_V       = 256    V-network hidden dimension
+  IQL_MARGIN             = 1.0    minimum Q-spread target
+  IQL_MARGIN_WEIGHT      = 0.3    margin loss weight
+  IQL_NOISE_STD          = 0.10   Gaussian noise std for augmentation
+  IQL_ORTHO_WEIGHT       = 0.05   orthogonality regularisation weight
+  IQL_TARGET_TAU         = 0.005  EMA smoothing for target V-net
+  IQL_GRAD_CLIP          = 1.0    max gradient norm
+  IQL_INFERENCE_TEMP     = 0.9    softmax temperature at inference
+
+
+================================================================================
+  7. INFERENCE PIPELINE (RUNTIME)
+================================================================================
+
+--------------------------------------------------------------------------------
+  7.1  IQLPolicySelector  (retrieval/policy_selector.py)
+--------------------------------------------------------------------------------
+
+  Initialisation:
+    1. Load label_map.json → policy_names = [bob, lindsay, michelle, niki, ross].
+    2. Load operator_prototypes.npy → action embeddings (5 × 384).
+    3. Load SentenceTransformer("all-MiniLM-L6-v2").
+    4. Build QNetworkEmbed(state_dim=384, action_embeds) and load weights
+       from iql_model.pt.
+    5. Load normalisation stats from norm_stats.npz.
+
+  select_policy(history) → (policy_name, q_values_dict):
+    1. Extract the last N_LAST_RESIDENT_INFER=1 resident utterance(s).
+    2. Embed: state_vec = mean(SentenceTransformer.encode(utterances)).
+    3. Normalise: state_vec = (state_vec - mean) / std.
+    4. Forward pass: q_values = qnet(state_vec)  → 5 Q-values.
+    5. Softmax sampling (see 7.2).
+
+Note: During training (I01), state vectors are built from the last 3
+resident utterances (N_LAST_RESIDENT_TRAIN=3). During inference, only
+the last 1 utterance is used (N_LAST_RESIDENT_INFER=1). This makes
+inference more responsive to the most recent resident statement.
+
+--------------------------------------------------------------------------------
+  7.2  Policy Selection (Softmax Sampling)
+--------------------------------------------------------------------------------
+
+  Given Q-values q = [q_1, ..., q_5]:
+
+    probabilities = softmax(q / τ)
+
+  where τ = IQL_INFERENCE_TEMP = 0.9.
+
+    p_i = exp(q_i / τ) / Σ_j exp(q_j / τ)
+
+  Then sample: chosen_action = np.random.choice(5, p=probabilities)
+
+  Temperature effects:
+    τ → 0: Nearly deterministic (always picks argmax Q). Exploits the
+            learned policy fully.
+    τ → ∞: Nearly uniform random. Explores all policies equally.
+    τ = 0.9: Strongly prefers the highest Q-value but allows switching
+             when Q-values are close, providing some adaptability.
+
+  Return: (policy_names[chosen_action], {name: q_value for each policy})
+
+--------------------------------------------------------------------------------
+  7.3  Per-Policy RAG Retrieval  (retrieval/rag_retrieval.py)
+--------------------------------------------------------------------------------
+
+  retrieve_topk_pairs(policy_name, query_text, k=2):
+    1. Load the FAISS index for the selected policy (e.g., ross.faiss).
+    2. Embed query_text (the latest resident utterance) with
+       SentenceTransformer, L2-normalised.
+    3. Search the index for top-K nearest neighbours (cosine similarity).
+    4. Return K (resident_text, operator_text) pairs as few-shot examples.
+
+  These examples are injected into the operator prompt as "Reference
+  style examples" to ground the LLM's response in successful historical
+  operator responses for that specific policy.
+
+--------------------------------------------------------------------------------
+  7.4  Prompt Construction  (simulation/operator_generator.py)
+--------------------------------------------------------------------------------
+
+  The _build_iql_rag_prompt function:
+
+    1. Look up the selected policy's concern and resources from the
+       _POLICY_RESOURCES dictionary.
+
+    2. Build the conversation context (last 10 turns).
+
+    3. Format RAG examples (up to 3 resident→operator pairs).
+
+    4. Construct the instruction:
+       - Identify the operator role (emergency wildfire evacuation).
+       - State the IQL-identified concern ("The IQL policy selector has
+         identified this resident's likely core concern: {concern}").
+       - List specific, authorized resources the operator can offer.
+       - Provide rules: be specific, name resources, don't be vague,
+         don't repeat, calm professional tone.
+
+    5. Assemble: instruction + conversation context + RAG examples + "Operator:"
+
+
+================================================================================
+  8. END-TO-END CONVERSATION FLOW
+================================================================================
+
+File: simulation/conversation_loop.py
+
+  1. SEED: Start with either an operator opener or a resident "Hello?"
+
+  2. LOOP (up to MAX_TURNS = 15):
+
+     OPERATOR TURN:
+       a. selector.select_policy(history) → best_policy, q_values
+       b. retrieve_topk_pairs(best_policy, last_resident_text, k=2) → examples
+       c. generate_operator_reply(history, strategy="iql_rag",
+                                  policy_name=best_policy,
+                                  rag_examples=examples)
+       d. LLM generates the operator response (temperature=0.2, max_tokens=64)
+       e. Append to history with metadata (selected_policy, q_values, examples)
+
+     RESIDENT TURN:
+       a. generate_resident_reply(history, resident_name)
+       b. LLM generates the resident response using the persona prompt
+       c. Append to history
+
+     DECISION CHECK (after each resident turn):
+       a. is_successful_session(history)
+       b. If SUCCESS → operator generates a closing message → STOP
+       c. If FAILURE → STOP
+       d. If None → CONTINUE
+
+  3. OUTPUT: { status, success (0/1), turns, history, path }
+
+  The conversation is saved as a JSONL file in data/runs/.
+
+
+================================================================================
+  9. DECISION JUDGE
+================================================================================
+
+File: simulation/decision.py
+
+The judge determines if the conversation has concluded. It uses a
+two-layer approach:
+
+  LAYER 1 — LLM Reasoning:
+    The last DECISION_TAIL_WINDOW=8 turns are sent to the LLM with a
+    classification prompt. The LLM must verify three conditions:
+      1. CONCERN IDENTIFIED: The resident stated a specific concern.
+      2. CONCERN ADDRESSED: The operator responded with a CONCRETE plan
+         (not generic urgency like "please leave now").
+      3. EXPLICIT AGREEMENT: The resident clearly committed to evacuating
+         with phrases like "okay I'll go", "let me get ready", etc.
+    All three must be present → SUCCESS.
+    The LLM responds: SUCCESS | FAILURE | UNCERTAIN.
+
+  LAYER 2 — Keyword/Pattern Matching:
+    - AGREEMENT_PATTERNS: 28 regex patterns matching explicit agreement
+      (e.g., "i'll go", "let me pack", "that works", "i'm ready").
+    - FAILURE_KEYWORDS: 17 contextual refusal phrases
+      (e.g., "staying put", "i'm not going", "not evacuating").
+
+  DECISION LOGIC:
+    - If LLM says SUCCESS AND last resident utterance matches an
+      agreement pattern → return True (SUCCESS).
+    - If recent resident turns contain 5+ refusal keyword hits →
+      return False (FAILURE).
+    - If turn count >= MAX_TURNS → return False (FAILURE).
+    - Otherwise → return None (continue the conversation).
+
+  Constraints:
+    - Decision is only checked after DECISION_MIN_TURNS = 6 turns.
+    - Early stopping only triggers on SUCCESS (not failure, unless
+      refusal streak or turn limit).
+
+
+================================================================================
+  10. EXPERIMENT RUNNER
+================================================================================
+
+File: experiments/exp3_iql_policy.py
+
+  USAGE:
+    python experiments/exp3_iql_policy.py
+    python experiments/exp3_iql_policy.py --residents ross,bob --runs 3
+    python experiments/exp3_iql_policy.py --runs 5 --tag v2
+
+  PROCEDURE:
+    1. Load IQLPolicySelector (expensive — done once).
+    2. For each resident in the persona list:
+       For each run (default 5):
+         Run a full conversation via run_conversation(strategy="iql_rag").
+    3. Aggregate results:
+       - Per-resident success rate
+       - Overall success rate
+    4. Save summary.json to data/runs/exp3_iql_policy_{timestamp}/.
+
+  DEFAULT CONFIGURATION:
+    --residents: all residents in PERSONA dict
+    --runs: 5 per resident
+    --max-turns: 16
+    --seed: "Hello, this is the fire department. We need you to evacuate immediately."
+
+
+================================================================================
+  SUMMARY: WHAT MAKES IQL+RAG DIFFERENT FROM THE BASELINES
+================================================================================
+
+  ZERO-SHOT (Experiment 1):
+    - Generic prompt, no examples, no policy adaptation.
+    - Operator has no specific resources to offer.
+    - Same response style regardless of resident concerns.
+
+  RAG-SUCCESSFUL (Experiment 2):
+    - Retrieves from a single global corpus of successful operators.
+    - Examples may not match the current resident's concern type.
+    - No policy selection — same retrieval index for everyone.
+
+  IQL+RAG (Experiment 3):
+    - IQL Q-network selects the best policy for the current state.
+    - Retrieval uses a POLICY-SPECIFIC FAISS index — examples are
+      drawn from dialogues with similar residents.
+    - Prompt includes the identified concern and specific, authorized
+      resources tailored to that concern type.
+    - The operator knows WHAT to offer, not just that they should
+      "persuade the resident to leave."
+
+================================================================================
+  END OF DOCUMENT
+================================================================================
