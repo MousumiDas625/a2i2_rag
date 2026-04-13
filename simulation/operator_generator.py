@@ -208,9 +208,9 @@ def _build_iql_rag_prompt(
         f"{resources_block}\n\n"
         "RULES:\n"
         "- 1-3 sentences maximum. Be specific, not vague.\n"
-        "- Name the resource: what vehicle, what team, what timeline.\n"
-        "- Do NOT say 'help is on the way' without specifying WHAT help.\n"
-        "- Do NOT repeat yourself. Each reply must advance the conversation.\n"
+        #"- Name the resource: what vehicle, what team, what timeline.\n"
+        #"- Do NOT say 'help is on the way' without specifying WHAT help.\n"
+        #"- Do NOT repeat yourself. Each reply must advance the conversation.\n" - try one run with these instructions commented out
         "- Calm, professional tone. No role labels or meta commentary.\n"
         "- Only use information revealed in the conversation — adapt the "
         "resources to what the resident has actually said."
