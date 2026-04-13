@@ -70,7 +70,8 @@ def run_conversation(
     Parameters
     ----------
     resident_name        : Persona key (e.g. "ross", "bob").
-    strategy             : "zero_shot" | "rag_successful" | "iql_rag"
+    strategy             : "zero_shot" | "rag_successful" | "iql_rag" |
+                           "iql_global_rag"
     seed_text            : Optional first operator line.
     max_turns            : Hard cap on total turns.
     k_examples           : Number of RAG examples per operator turn.
@@ -94,6 +95,11 @@ def run_conversation(
     if strategy == "iql_rag":
         from retrieval.policy_selector import IQLPolicySelector
         from retrieval.rag_retrieval import retrieve_topk_pairs
+        if selector is None:
+            selector = IQLPolicySelector()
+    if strategy == "iql_global_rag":
+        from retrieval.policy_selector import IQLPolicySelector
+        from retrieval.rag_retrieval import retrieve_from_successful
         if selector is None:
             selector = IQLPolicySelector()
     if strategy == "rag_successful":
@@ -148,6 +154,16 @@ def run_conversation(
                     rag_examples = retrieve_topk_pairs(best_policy, last_res, k=k_examples)
                     q_str = ", ".join(f"{k}: {v:.3f}" for k, v in qvals.items())
                     print(f"[TURN {turn_idx}] Policy: {best_policy} | Q: {{{q_str}}}")
+
+                elif strategy == "iql_global_rag":
+                    best_policy, qvals = selector.select_policy(history)
+                    policy_name = best_policy
+                    last_res = next(
+                        (h["text"] for h in reversed(history) if h["role"] == "resident"), ""
+                    )
+                    rag_examples = retrieve_from_successful(last_res, k=k_examples)
+                    q_str = ", ".join(f"{k}: {v:.3f}" for k, v in qvals.items())
+                    print(f"[TURN {turn_idx}] Policy: {best_policy} (global RAG) | Q: {{{q_str}}}")
 
                 elif strategy == "rag_successful":
                     last_res = next(
@@ -207,6 +223,12 @@ def run_conversation(
                     (h["text"] for h in reversed(history) if h["role"] == "resident"), ""
                 )
                 rag_examples_close = retrieve_topk_pairs(policy_close, last_res, k=k_examples)
+            elif strategy == "iql_global_rag" and selector is not None:
+                policy_close, qvals_close = selector.select_policy(history)
+                last_res = next(
+                    (h["text"] for h in reversed(history) if h["role"] == "resident"), ""
+                )
+                rag_examples_close = retrieve_from_successful(last_res, k=k_examples)
             elif strategy == "rag_successful":
                 last_res = next(
                     (h["text"] for h in reversed(history) if h["role"] == "resident"), ""

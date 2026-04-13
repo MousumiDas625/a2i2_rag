@@ -3,8 +3,8 @@ operator_generator.py — LLM-Driven Operator Response Generator
 ================================================================
 
 PURPOSE:
-    Generates the operator's response using the LLM.  Supports three
-    prompting strategies corresponding to the three experiments:
+    Generates the operator's response using the LLM.  Supports four
+    prompting strategies corresponding to the experiments:
 
     1. ZERO-SHOT  — No training data.  The LLM receives only a system
                     prompt describing the evacuation scenario.
@@ -13,6 +13,10 @@ PURPOSE:
                         examples.
     3. IQL+RAG   — Uses the IQL-selected policy's per-policy FAISS
                    index for policy-specific few-shot examples.
+    4. IQL+GLOBAL-RAG — Uses IQL policy selection (concern + resources)
+                        but retrieves examples from the global
+                        successful-operator corpus instead of the
+                        per-policy index.  Baseline for ablation.
 
 HOW IT WORKS:
     Each strategy has a dedicated prompt builder.  The public function
@@ -31,6 +35,12 @@ USAGE:
     # IQL + per-policy RAG
     reply = generate_operator_reply(
         history, strategy="iql_rag",
+        policy_name="bob", rag_examples=[...],
+    )
+
+    # IQL + global RAG (ablation baseline)
+    reply = generate_operator_reply(
+        history, strategy="iql_global_rag",
         policy_name="bob", rag_examples=[...],
     )
 """
@@ -223,6 +233,54 @@ def _build_iql_rag_prompt(
     return prompt.strip()
 
 
+def _build_iql_global_rag_prompt(
+    history: List[Dict],
+    policy_name: str,
+    rag_examples: List[Dict],
+    max_context: int = 6,
+) -> str:
+    """IQL policy selection + concern/resources, but RAG over ALL successful
+    operator utterances (global corpus) instead of the per-policy index.
+    Context window matches zero-shot/rag baselines (6 turns)."""
+    policy_info = _POLICY_RESOURCES.get(policy_name, {})
+    concern = policy_info.get("concern", "general safety")
+    resources = policy_info.get("resources", [])
+    resources_block = "\n".join(f"  - {r}" for r in resources)
+
+    context = history[-max_context:]
+    context_text = "\n".join(
+        f"{'Operator' if h['role'] == 'operator' else 'Resident'}: "
+        f"{h['text'].strip()}"
+        for h in context
+    )
+
+    ex_lines = []
+    for ex in rag_examples[:3]:
+        text = ex.get("text", "").strip()
+        if text:
+            ex_lines.append(f"  - {text}")
+    ex_block = "\n".join(ex_lines) if ex_lines else None
+
+    instruction = (
+        "You are an emergency OPERATOR on a wildfire evacuation call.\n\n"
+        f"The IQL policy selector has identified this resident's likely "
+        f"core concern: {concern}.\n\n"
+        f"RESOURCES YOU CAN OFFER (use these — they are real and authorized):\n"
+        f"{resources_block}\n\n"
+        "RULES:\n"
+        "- 1-3 sentences maximum. Be specific, not vague.\n"
+        "- Calm, professional tone. No role labels or meta commentary.\n"
+        "- Only use information revealed in the conversation — adapt the "
+        "resources to what the resident has actually said."
+    )
+
+    prompt = f"{instruction}\n\nConversation so far:\n{context_text}\n\n"
+    if ex_block:
+        prompt += f"Example successful operator utterances:\n{ex_block}\n\n"
+    prompt += "Operator:"
+    return prompt.strip()
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # Public API
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -241,12 +299,13 @@ def generate_operator_reply(
     Parameters
     ----------
     history      : Conversation so far.
-    strategy     : "zero_shot" | "rag_successful" | "iql_rag"
+    strategy     : "zero_shot" | "rag_successful" | "iql_rag" |
+                   "iql_global_rag"
     temperature  : Sampling temperature.
     max_tokens   : Max response length.
-    policy_name  : Required for "iql_rag" strategy.
-    rag_examples : Retrieved examples.  For "rag_successful" these are
-                   dicts with "text".  For "iql_rag" they have
+    policy_name  : Required for "iql_rag" and "iql_global_rag" strategies.
+    rag_examples : Retrieved examples.  For "rag_successful" / "iql_global_rag"
+                   these are dicts with "text".  For "iql_rag" they have
                    "resident_text" and "operator_text".
 
     Returns
@@ -264,10 +323,15 @@ def generate_operator_reply(
             raise ValueError("policy_name is required for 'iql_rag' strategy.")
         prompt = _build_iql_rag_prompt(history, policy_name, rag_examples or [])
 
+    elif strategy == "iql_global_rag":
+        if policy_name is None:
+            raise ValueError("policy_name is required for 'iql_global_rag' strategy.")
+        prompt = _build_iql_global_rag_prompt(history, policy_name, rag_examples or [])
+
     else:
         raise ValueError(
             f"Unknown strategy '{strategy}'.  "
-            "Use 'zero_shot', 'rag_successful', or 'iql_rag'."
+            "Use 'zero_shot', 'rag_successful', 'iql_rag', or 'iql_global_rag'."
         )
 
     reply = call_llm(
