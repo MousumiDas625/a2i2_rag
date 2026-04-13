@@ -165,6 +165,7 @@ def run_conversation(
                 entry: dict = {"role": "operator", "text": op_reply}
                 if policy_name:
                     entry["selected_policy"] = policy_name
+                    entry["q_values"] = qvals
                     entry["examples_used"] = rag_examples
                 history.append(entry)
 
@@ -198,8 +199,9 @@ def run_conversation(
             # resident's cooperation and answers any remaining questions
             rag_examples_close: list = []
             policy_close: Optional[str] = None
+            qvals_close = {}
             if strategy == "iql_rag" and selector is not None:
-                policy_close, _ = selector.select_policy(history)
+                policy_close, qvals_close = selector.select_policy(history)
                 last_res = next(
                     (h["text"] for h in reversed(history) if h["role"] == "resident"), ""
                 )
@@ -218,7 +220,11 @@ def run_conversation(
                 policy_name=policy_close,
                 rag_examples=rag_examples_close,
             )
-            history.append({"role": "operator", "text": close_reply})
+            close_entry: dict = {"role": "operator", "text": close_reply}
+            if policy_close:
+                close_entry["selected_policy"] = policy_close
+                close_entry["q_values"] = qvals_close
+            history.append(close_entry)
             print(f"Operator (closing): {close_reply}\n")
             break
         elif decision is False:
