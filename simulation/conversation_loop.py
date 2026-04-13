@@ -112,6 +112,8 @@ def run_conversation(
         history.append({"role": "resident", "text": "Hello? Who is this?"})
         operator_next = True
 
+    final_decision = None
+
     print(f"\n[START] {strategy} | resident={resident_name} | run={ts}")
     print("=" * 60)
 
@@ -194,9 +196,8 @@ def run_conversation(
         )
 
         if decision is True:
+            final_decision = True
             print("[OK] Resident agreed to evacuate.")
-            # Generate a final operator turn that acknowledges the
-            # resident's cooperation and answers any remaining questions
             rag_examples_close: list = []
             policy_close: Optional[str] = None
             qvals_close = {}
@@ -228,6 +229,7 @@ def run_conversation(
             print(f"Operator (closing): {close_reply}\n")
             break
         elif decision is False:
+            final_decision = False
             print("[X] Resident refused / turn limit reached.")
             break
 
@@ -240,8 +242,7 @@ def run_conversation(
         for h in history:
             f.write(json.dumps(h, ensure_ascii=False) + "\n")
 
-    decision_final, _ = is_successful_session(history)
-    success = bool(decision_final)
+    success = bool(final_decision)
     status = "SUCCESS" if success else "FAILURE"
     print(f"[FINAL] {status} | {len(history)} turns | → {out_file.name}")
 

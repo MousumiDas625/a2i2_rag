@@ -135,7 +135,7 @@ DEFAULT_MAX_TOKENS_RES  = 64
 # DECISION JUDGE CONFIG
 # ═══════════════════════════════════════════════════════════════════════════════
 DECISION_MIN_TURNS   = 6
-DECISION_TAIL_WINDOW = 2
+DECISION_TAIL_WINDOW = 8
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # COLUMN HINTS (for XLSX parsing)

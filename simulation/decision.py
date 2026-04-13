@@ -46,6 +46,32 @@ FAILURE_KEYWORDS = [
     "dont need to", "no danger", "no need", "safe here",
 ]
 
+AGREEMENT_PATTERNS = [
+    r"\bokay\b.*\b(go|leave|head out|evacuate|get ready|pack)",
+    r"\balright\b.*\b(go|leave|head out|evacuate|get ready|pack)",
+    r"\bfine\b.*\b(go|leave|head out|evacuate|i'll)",
+    r"\bi'll go\b", r"\bi will go\b",
+    r"\bi'll leave\b", r"\bi will leave\b",
+    r"\blet me get ready\b", r"\blet me pack\b",
+    r"\bwe'll head out\b", r"\bwe will head out\b",
+    r"\bwe'll go\b", r"\bwe will go\b",
+    r"\bwe'll leave\b", r"\bwe will leave\b",
+    r"\bstart packing\b", r"\bstart getting ready\b",
+    r"\bi'll start\b.*\b(pack|ready|leav)",
+    r"\blet's go\b", r"\blet us go\b",
+    r"\bready to (go|leave|evacuate)\b",
+    r"\bi('ll| will) (head|move|evacuate)\b",
+]
+
+
+def _resident_explicitly_agreed(utterances: List[Dict[str, str]]) -> bool:
+    """Check if the last resident utterance contains explicit agreement."""
+    for u in reversed(utterances):
+        if u["role"] == "resident":
+            text = u["text"].lower()
+            return any(re.search(p, text) for p in AGREEMENT_PATTERNS)
+    return False
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Internal helpers
@@ -74,28 +100,33 @@ def _build_judge_prompt(
         for u in utterances[-window:]
     )
     return (
-        "You are judging whether an evacuation call was successful.\n\n"
-        "IMPORTANT — read the FULL conversation carefully. Pay attention "
-        "to whether the OPERATOR actually addressed the RESIDENT's "
-        "specific, personal concerns (pets, work, passengers, health, "
-        "property, etc.) with a concrete plan or specific reassurance.\n\n"
-        "- SUCCESS: The resident has EXPLICITLY agreed to evacuate or "
-        "begin preparing to leave (e.g. 'okay I'll go', 'let me get "
-        "ready', 'alright, if you can handle X then I'll leave'). "
-        "This agreement must come AFTER the operator addressed the "
-        "resident's specific concern — not after a generic 'please "
-        "leave' or 'it's dangerous'.\n"
-        "- FAILURE: The resident is firmly refusing to evacuate and "
-        "the operator has NOT addressed the resident's actual concerns. "
-        "The resident is clearly not moving toward cooperation.\n"
-        "- UNCERTAIN: The resident is still raising concerns or asking "
-        "questions. Even if the tone is calmer, if the resident has "
-        "NOT yet said they will leave or start preparing, this is "
-        "UNCERTAIN — do NOT rush to call it SUCCESS.\n\n"
-        "A resident merely asking follow-up questions ('what about X?', "
-        "'how will you handle Y?') is NOT success — they are still "
-        "seeking reassurance. Only mark SUCCESS when the resident "
-        "commits to leaving.\n\n"
+        "You are a STRICT judge evaluating a wildfire evacuation call.\n\n"
+        "You must verify ALL THREE of the following before marking SUCCESS:\n\n"
+        "  1. CONCERN IDENTIFIED: The resident stated a specific personal "
+        "concern (e.g. elderly passengers, pets, children, work project, "
+        "property, mobility issues, needing transport).\n\n"
+        "  2. CONCERN ADDRESSED: The operator responded to THAT EXACT "
+        "concern with a CONCRETE, SPECIFIC plan — not generic urgency. "
+        "Examples of concrete plans:\n"
+        "     - 'We are sending a van for your passengers'\n"
+        "     - 'Animal control will pick up your dogs'\n"
+        "     - 'A team will secure your equipment'\n"
+        "     - 'We will contact the parents'\n"
+        "   Examples that are NOT concrete (just generic urgency):\n"
+        "     - 'Please leave now, it is dangerous'\n"
+        "     - 'We will handle everything'\n"
+        "     - 'Your safety is the priority'\n"
+        "     - 'Help is on the way' (without specifying what help)\n\n"
+        "  3. EXPLICIT AGREEMENT: The resident clearly committed to "
+        "evacuating with phrases like 'okay I'll go', 'let me get "
+        "ready', 'fine I'll leave', 'we'll head out'. Merely asking "
+        "a follow-up question or sounding calmer does NOT count.\n\n"
+        "ALL THREE must be present. If ANY is missing → NOT success.\n\n"
+        "- SUCCESS: All three conditions above are clearly met.\n"
+        "- FAILURE: The resident is firmly refusing and the operator "
+        "has only given generic urgency without a concrete plan.\n"
+        "- UNCERTAIN: Anything else — including partial progress.\n\n"
+        "When in doubt, choose UNCERTAIN.\n"
         "Answer with ONE WORD ONLY: SUCCESS, FAILURE, or UNCERTAIN.\n\n"
         f"{snippet}\n\nDecision:"
     )
@@ -146,10 +177,13 @@ def is_successful_session(
         any(kw in line for kw in FAILURE_KEYWORDS) for line in recent_res
     )
 
-    # LLM judge
+    # Hard gate: resident's last utterance must contain explicit agreement
+    resident_agreed = _resident_explicitly_agreed(utterances)
+
+    # LLM judge (only trust SUCCESS if resident actually said they'll go)
     llm_decision = _query_llm_decision(utterances, window=tail_window)
 
-    if allow_early_stop and llm_decision is True:
+    if allow_early_stop and llm_decision is True and resident_agreed:
         return True, (
             "Acknowledged. Assistance will arrive shortly — "
             "please stay safe while leaving the area."
