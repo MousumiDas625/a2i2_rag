@@ -42,8 +42,10 @@ from simulation.llm_client import call_llm
 
 FAILURE_KEYWORDS = [
     "not leaving", "won't go", "will not go", "refuse", "refusing",
-    "stay", "staying", "staying put", "we're fine", "don't need to",
-    "dont need to", "no danger", "no need", "safe here",
+    "staying put", "staying here", "staying home",
+    "we're fine", "don't need to", "dont need to",
+    "no danger", "no need", "safe here",
+    "i'm not going", "not evacuating", "will not leave",
 ]
 
 AGREEMENT_PATTERNS = [
@@ -61,6 +63,18 @@ AGREEMENT_PATTERNS = [
     r"\blet's go\b", r"\blet us go\b",
     r"\bready to (go|leave|evacuate)\b",
     r"\bi('ll| will) (head|move|evacuate)\b",
+    r"\bi('m| am) ready\b",
+    r"\bi('ll| will) (get|be) ready\b",
+    r"\bwe('re| are) (leaving|going|heading)\b",
+    r"\bwe('ll| will) be ready\b",
+    r"\bi('ll| will) prepare\b",
+    r"\bi can (do that|work with that)\b",
+    r"\blet me grab\b.*\b(things|stuff|keys|bag|essentials)",
+    r"\bthat works\b",
+    r"\bi('ll| will) (start|begin) (getting|packing|preparing)\b",
+    r"\bcount (me|us) in\b",
+    r"\bokay\b.*\b(that works|makes sense|sounds good)\b",
+    r"\bi('ll| will) (come|follow|meet)\b",
 ]
 
 

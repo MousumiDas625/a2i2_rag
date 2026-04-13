@@ -130,13 +130,61 @@ def _build_rag_successful_prompt(
     ).strip()
 
 
+_POLICY_RESOURCES = {
+    "bob": {
+        "concern": "work commitments and not wanting to be interrupted",
+        "resources": [
+            "A data-backup crew will arrive within 20 minutes to secure your equipment and files",
+            "The evacuation center on Main Street has Wi-Fi, power outlets, and desk space so you can resume work immediately",
+            "We will transport your essential work equipment in a separate cargo vehicle",
+        ],
+    },
+    "niki": {
+        "concern": "uncertainty about the situation and needing clear direction",
+        "resources": [
+            "A patrol car will escort you and your husband directly to the evacuation center on Lincoln Road",
+            "The evacuation route via Oak Avenue is fully clear and monitored by our units right now",
+            "The shelter at Lincoln High School has food, water, cots, and medical staff ready for you",
+        ],
+    },
+    "lindsay": {
+        "concern": "children's safety and needing parental approval before leaving",
+        "resources": [
+            "We are contacting the children's parents right now and will relay their instructions to you",
+            "A child-safe transport with car seats is being dispatched to your address",
+            "The evacuation center has a dedicated children's area with trained childcare staff",
+        ],
+    },
+    "michelle": {
+        "concern": "protecting property and believing the house is prepared",
+        "resources": [
+            "A fire-protection crew will apply retardant spray to your house immediately after you leave",
+            "We are stationing a monitoring team on your street to protect properties during the evacuation",
+            "Your address is flagged for priority property-protection — a crew is assigned specifically to your block",
+        ],
+    },
+    "ross": {
+        "concern": "stranded passengers with mobility issues who cannot move on their own",
+        "resources": [
+            "A wheelchair-accessible van is being dispatched to your GPS location right now",
+            "Two EMTs with stretchers and mobility equipment will arrive within 15 minutes",
+            "We are clearing Route 5 as a dedicated evacuation corridor for your vehicle",
+        ],
+    },
+}
+
+
 def _build_iql_rag_prompt(
     history: List[Dict],
     policy_name: str,
     rag_examples: List[Dict],
-    max_context: int = 6,
+    max_context: int = 10,
 ) -> str:
-    policy_id = policy_name
+    policy_info = _POLICY_RESOURCES.get(policy_name, {})
+    concern = policy_info.get("concern", "general safety")
+    resources = policy_info.get("resources", [])
+    resources_block = "\n".join(f"  - {r}" for r in resources)
+
     context = history[-max_context:]
     context_text = "\n".join(
         f"{'Operator' if h['role'] == 'operator' else 'Resident'}: "
@@ -149,33 +197,30 @@ def _build_iql_rag_prompt(
         r_line = ex.get("resident_text", "").strip()
         o_line = ex.get("operator_text", "").strip()
         if r_line and o_line:
-            example_lines.append(f"Resident: {r_line}\nOperator: {o_line}")
+            example_lines.append(f"  Resident: {r_line}\n  Operator: {o_line}")
     ex_block = "\n\n".join(example_lines) if example_lines else None
 
     instruction = (
-        "You are the OPERATOR talking to a RESIDENT during a wildfire "
-        "evacuation call.\n"
-        f"Use the operator policy style optimized for: {policy_id}.\n"
-        "Read the conversation so far, then produce the next operator reply.\n"
-        "CRITICAL RULES:\n"
-        "- KEEP IT BRIEF: Maximum 1-2 short sentences (20-30 words total).\n"
-        "- Get straight to the point - no elaboration.\n"
-        "- Calm, professional, evacuation-focused.\n"
-        "- If resident resists, emphasize urgency/danger; if cooperative, "
-        "give clear next steps.\n"
-        "- No role labels, no meta commentary.\n"
-        "- Avoid gendered pronouns.\n"
-        "- Be direct and concise.\n"
-        "- Only use information revealed in the conversation - do not assume "
-        "anything about the resident.\n"
-        "Use the similar examples for style guidance."
+        "You are an emergency OPERATOR on a wildfire evacuation call.\n\n"
+        f"The IQL policy selector has identified this resident's likely "
+        f"core concern: {concern}.\n\n"
+        f"RESOURCES YOU CAN OFFER (use these — they are real and authorized):\n"
+        f"{resources_block}\n\n"
+        "RULES:\n"
+        "- 1-3 sentences maximum. Be specific, not vague.\n"
+        "- Name the resource: what vehicle, what team, what timeline.\n"
+        "- Do NOT say 'help is on the way' without specifying WHAT help.\n"
+        "- Do NOT repeat yourself. Each reply must advance the conversation.\n"
+        "- Calm, professional tone. No role labels or meta commentary.\n"
+        "- Only use information revealed in the conversation — adapt the "
+        "resources to what the resident has actually said."
     )
-    return (
-        f"{instruction}\n\n"
-        f"Conversation so far:\n{context_text}\n\n"
-        f"Similar example dialogues:\n{ex_block if ex_block else '(none)'}\n\n"
-        "Operator:"
-    ).strip()
+
+    prompt = f"{instruction}\n\nConversation so far:\n{context_text}\n\n"
+    if ex_block:
+        prompt += f"Reference style examples:\n{ex_block}\n\n"
+    prompt += "Operator:"
+    return prompt.strip()
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
