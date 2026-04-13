@@ -181,7 +181,7 @@ metrics: dict = {k: [] for k in [
     "epoch", "train_LQ", "train_LV", "val_LQ", "val_LV",
     "meanQ", "stdQ", "val_total", "per_policy_Q", "spread",
 ]}
-best_val_loss = float("inf")
+best_val_q = float("inf")
 patience = IQL_EARLY_STOP_PATIENCE
 
 for epoch in range(1, IQL_EPOCHS + 1):
@@ -282,16 +282,16 @@ for epoch in range(1, IQL_EPOCHS + 1):
         f"spread {spread:.3f}"
     )
 
-    if val_loss < best_val_loss - 1e-6:
-        best_val_loss = val_loss
+    if LQ_val < best_val_q - 1e-6:
+        best_val_q = LQ_val
         patience = IQL_EARLY_STOP_PATIENCE
         torch.save(qnet.state_dict(), MODEL_Q_OUT)
         torch.save(vnet.state_dict(), MODEL_V_OUT)
-        print(f"  [BEST] epoch {epoch:03d} | val_total {val_loss:.6f}")
+        print(f"  [BEST] epoch {epoch:03d} | val_Q {LQ_val:.6f} | val_total {val_loss:.6f}")
     else:
         patience -= 1
         if patience == 0:
-            print(f"[EARLY STOP] No improvement for {IQL_EARLY_STOP_PATIENCE} epochs.")
+            print(f"[EARLY STOP] No improvement in val_Q for {IQL_EARLY_STOP_PATIENCE} epochs.")
             break
 
 # ─────────────────────────────────────────────────────────────────────────────
