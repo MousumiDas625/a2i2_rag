@@ -94,7 +94,7 @@ LLM_MODEL = os.environ.get("LLM_MODEL", OLLAMA_MODEL if LLM_PROVIDER == "ollama"
 # IQL TRAINING HYPERPARAMETERS
 # ═══════════════════════════════════════════════════════════════════════════════
 IQL_EPOCHS             = 800
-IQL_BATCH_SIZE         = 32
+IQL_BATCH_SIZE         = 16
 IQL_LR_Q               = 1e-4
 IQL_LR_V               = 5e-5
 IQL_WEIGHT_DECAY       = 1e-4
