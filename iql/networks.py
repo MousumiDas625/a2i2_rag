@@ -40,9 +40,11 @@ class QNetworkEmbed(nn.Module):
                            action embedding → one advantage per action.
         4. Q(s,a) = V(s) + A(s,a) - mean_a[A(s,a)]
 
-    The action embeddings are registered as a non-learnable buffer, so
-    they never collapse.  The dot product structurally guarantees that
-    geometrically different embeddings produce different Q-values.
+    The action embeddings are initialised from pre-computed operator
+    prototypes but are **trainable** (nn.Parameter), allowing the
+    network to push them apart for better Q-value separation.
+    An orthogonality regularisation term in the training loop prevents
+    them from collapsing into each other.
     """
 
     def __init__(self, state_dim: int, action_embeds: torch.Tensor,
@@ -50,7 +52,7 @@ class QNetworkEmbed(nn.Module):
                  dropout: float = IQL_DROPOUT):
         super().__init__()
         num_actions, action_dim = action_embeds.shape
-        self.register_buffer("action_embeds", action_embeds)
+        self.action_embeds = nn.Parameter(action_embeds.clone())
 
         mid_dim = hidden_dim // 2  # 128 when hidden_dim=256
         self.encoder = nn.Sequential(

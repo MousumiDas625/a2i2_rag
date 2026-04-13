@@ -6,7 +6,7 @@ Loads the trained Dueling-Embed IQL Q-network and selects the best
 operator policy at runtime.
 
 Q(s,a) = V(s) + A(s,a) − mean_a[A(s,a)]
-where  A(s,a) = project(encode(s)) · frozen_embed(a)
+where  A(s,a) = project(encode(s)) · trainable_embed(a)
 
 Uses temperature-based softmax sampling so that when Q-values are close,
 different policies can be explored; when one policy dominates, it is

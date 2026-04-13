@@ -5,7 +5,7 @@ I03_train_iql.py — Train the IQL Policy Selector (Dueling Embed Mode)
 
 Architecture:
     Q(s,a) = V(s) + A(s,a) − mean_a[A(s,a)]
-    where A(s,a) = project(encode(s)) · frozen_embed(a)
+    where A(s,a) = project(encode(s)) · trainable_embed(a)
 
 Key training features:
     - EMA target V-network for stable Bellman targets
@@ -44,7 +44,7 @@ from config.settings import (
     IQL_WEIGHT_DECAY, IQL_VAL_SPLIT, IQL_GAMMA, IQL_LAMBDA_V,
     IQL_EARLY_STOP_PATIENCE,
     IQL_MARGIN, IQL_MARGIN_WEIGHT, IQL_NOISE_STD,
-    IQL_TARGET_TAU, IQL_GRAD_CLIP,
+    IQL_TARGET_TAU, IQL_GRAD_CLIP, IQL_ORTHO_WEIGHT,
 )
 from iql.networks import QNetworkEmbed, ValueNetwork
 
@@ -129,6 +129,17 @@ sched_v = optim.lr_scheduler.CosineAnnealingLR(opt_v, T_max=IQL_EPOCHS, eta_min=
 mse   = nn.MSELoss()
 
 
+import torch.nn.functional as F
+
+
+def orthogonality_loss(embeds: torch.Tensor) -> torch.Tensor:
+    """Penalise cosine similarity between embedding pairs to keep them diverse."""
+    norm = F.normalize(embeds, dim=1)
+    gram = norm @ norm.T
+    eye  = torch.eye(len(norm), device=norm.device)
+    return ((gram - eye) ** 2).mean()
+
+
 @torch.no_grad()
 def ema_update(target: nn.Module, source: nn.Module, tau: float):
     """Soft-update target parameters: θ_t ← τ·θ_s + (1−τ)·θ_t"""
@@ -175,7 +186,7 @@ patience = IQL_EARLY_STOP_PATIENCE
 
 for epoch in range(1, IQL_EPOCHS + 1):
     qnet.train(); vnet.train()
-    tot_LQ, tot_LV, tot_Lm, cnt = 0.0, 0.0, 0.0, 0
+    tot_LQ, tot_LV, tot_Lm, tot_Lo, cnt = 0.0, 0.0, 0.0, 0.0, 0
     q_means, q_stds = [], []
 
     for xb, xnb, ab, rb in balanced_batch_iter(X_tr, Xn_tr, a_tr, r_tr, IQL_BATCH_SIZE):
@@ -200,7 +211,9 @@ for epoch in range(1, IQL_EPOCHS + 1):
             IQL_MARGIN - q_spread, min=0.0
         ).mean()
 
-        loss = L_Q + IQL_LAMBDA_V * L_V + L_margin
+        L_ortho = IQL_ORTHO_WEIGHT * orthogonality_loss(qnet.action_embeds)
+
+        loss = L_Q + IQL_LAMBDA_V * L_V + L_margin + L_ortho
 
         opt_q.zero_grad(); opt_v.zero_grad()
         loss.backward()
@@ -221,11 +234,13 @@ for epoch in range(1, IQL_EPOCHS + 1):
         tot_LQ += L_Q.item() * len(xb)
         tot_LV += L_V.item() * len(xb)
         tot_Lm += L_margin.item() * len(xb)
+        tot_Lo += L_ortho.item() * len(xb)
         cnt    += len(xb)
 
     train_LQ = tot_LQ / cnt
     train_LV = tot_LV / cnt
     train_Lm = tot_Lm / cnt
+    train_Lo = tot_Lo / cnt
 
     # ── Validation ────────────────────────────────────────────────────────────
     qnet.eval(); vnet.eval()
@@ -261,7 +276,8 @@ for epoch in range(1, IQL_EPOCHS + 1):
 
     print(
         f"Epoch {epoch:03d} | Train_Q {train_LQ:.5f} | Train_V {train_LV:.5f} | "
-        f"L_margin {train_Lm:.5f} | Val_Q {LQ_val:.5f} | Val_V {LV_val:.5f} | "
+        f"L_margin {train_Lm:.5f} | L_ortho {train_Lo:.5f} | "
+        f"Val_Q {LQ_val:.5f} | Val_V {LV_val:.5f} | "
         f"meanQ {np.mean(q_means):.3f} | stdQ {np.mean(q_stds):.3f} | "
         f"spread {spread:.3f}"
     )
