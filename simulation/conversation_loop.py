@@ -194,9 +194,32 @@ def run_conversation(
 
         if decision is True:
             print("[OK] Resident agreed to evacuate.")
-            if closing_msg:
-                history.append({"role": "operator", "text": closing_msg})
-                print(f"Operator (closing): {closing_msg}\n")
+            # Generate a final operator turn that acknowledges the
+            # resident's cooperation and answers any remaining questions
+            rag_examples_close: list = []
+            policy_close: Optional[str] = None
+            if strategy == "iql_rag" and selector is not None:
+                policy_close, _ = selector.select_policy(history)
+                last_res = next(
+                    (h["text"] for h in reversed(history) if h["role"] == "resident"), ""
+                )
+                rag_examples_close = retrieve_topk_pairs(policy_close, last_res, k=k_examples)
+            elif strategy == "rag_successful":
+                last_res = next(
+                    (h["text"] for h in reversed(history) if h["role"] == "resident"), ""
+                )
+                rag_examples_close = retrieve_from_successful(last_res, k=k_examples)
+
+            close_reply = generate_operator_reply(
+                history,
+                strategy=strategy,
+                temperature=temperature_op,
+                max_tokens=DEFAULT_MAX_TOKENS_OP,
+                policy_name=policy_close,
+                rag_examples=rag_examples_close,
+            )
+            history.append({"role": "operator", "text": close_reply})
+            print(f"Operator (closing): {close_reply}\n")
             break
         elif decision is False:
             print("[X] Resident refused / turn limit reached.")
