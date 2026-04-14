@@ -239,9 +239,10 @@ def _build_iql_global_rag_prompt(
     rag_examples: List[Dict],
     max_context: int = 6,
 ) -> str:
-    """IQL policy selection + concern/resources, but RAG over ALL successful
-    operator utterances (global corpus) instead of the per-policy index.
-    Context window matches zero-shot/rag baselines (6 turns)."""
+    """Identical to _build_iql_rag_prompt (same instruction, context window,
+    concern/resources, and formatting) — the only difference is that the
+    RAG examples come from the global successful-operator corpus, so each
+    example dict has "text" instead of "resident_text"/"operator_text"."""
     policy_info = _POLICY_RESOURCES.get(policy_name, {})
     concern = policy_info.get("concern", "general safety")
     resources = policy_info.get("resources", [])
@@ -254,12 +255,17 @@ def _build_iql_global_rag_prompt(
         for h in context
     )
 
-    ex_lines = []
+    example_lines = []
     for ex in rag_examples[:3]:
-        text = ex.get("text", "").strip()
-        if text:
-            ex_lines.append(f"  - {text}")
-    ex_block = "\n".join(ex_lines) if ex_lines else None
+        r_line = ex.get("resident_text", "").strip()
+        o_line = ex.get("operator_text", "").strip()
+        if r_line and o_line:
+            example_lines.append(f"  Resident: {r_line}\n  Operator: {o_line}")
+        else:
+            text = ex.get("text", "").strip()
+            if text:
+                example_lines.append(f"  Operator: {text}")
+    ex_block = "\n\n".join(example_lines) if example_lines else None
 
     instruction = (
         "You are an emergency OPERATOR on a wildfire evacuation call.\n\n"
@@ -276,7 +282,7 @@ def _build_iql_global_rag_prompt(
 
     prompt = f"{instruction}\n\nConversation so far:\n{context_text}\n\n"
     if ex_block:
-        prompt += f"Example successful operator utterances:\n{ex_block}\n\n"
+        prompt += f"Reference style examples:\n{ex_block}\n\n"
     prompt += "Operator:"
     return prompt.strip()
 
