@@ -11,12 +11,16 @@ PURPOSE:
     2. RAG-SUCCESSFUL — Injects top-K retrieved utterances from the
                         global successful-operator corpus as few-shot
                         examples.
-    3. IQL+RAG   — Uses the IQL-selected policy's per-policy FAISS
-                   index for policy-specific few-shot examples.
-    4. IQL+GLOBAL-RAG — Uses IQL policy selection (concern + resources)
-                        but retrieves examples from the global
-                        successful-operator corpus instead of the
-                        per-policy index.  Baseline for ablation.
+    3. IQL+RAG   — Uses the IQL-selected policy to inject the matching
+                   persona profile from config/personas.py, plus
+                   per-policy FAISS RAG examples.
+    4. IQL+GLOBAL-RAG — Same persona injection as IQL+RAG, but retrieves
+                        examples from the global successful-operator
+                        corpus instead of the per-policy index.
+    5. IQL+PERSONA-ONLY — IQL policy selection + persona profile, NO RAG.
+    6. RANDOM+PERSONA  — Random policy selection + persona profile, no RAG.
+    7. RANDOM (no persona) — Random policy selected for tracking only;
+                             prompt is identical to zero-shot.
 
 HOW IT WORKS:
     Each strategy has a dedicated prompt builder.  The public function
@@ -51,6 +55,7 @@ from typing import List, Dict, Optional
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from config.settings import DEFAULT_TEMPERATURE_OP, DEFAULT_MAX_TOKENS_OP
+from config.personas import PERSONA
 from simulation.llm_client import call_llm
 
 FALLBACK_REPLY = "Please evacuate immediately; conditions can worsen quickly."
@@ -140,48 +145,14 @@ def _build_rag_successful_prompt(
     ).strip()
 
 
-_POLICY_RESOURCES = {
-    "bob": {
-        "concern": "work commitments and not wanting to be interrupted",
-        "resources": [
-            "A data-backup crew will arrive within 20 minutes to secure your equipment and files",
-            "The evacuation center on Main Street has Wi-Fi, power outlets, and desk space so you can resume work immediately",
-            "We will transport your essential work equipment in a separate cargo vehicle",
-        ],
-    },
-    "niki": {
-        "concern": "uncertainty about the situation and needing clear direction",
-        "resources": [
-            "A patrol car will escort you and your husband directly to the evacuation center on Lincoln Road",
-            "The evacuation route via Oak Avenue is fully clear and monitored by our units right now",
-            "The shelter at Lincoln High School has food, water, cots, and medical staff ready for you",
-        ],
-    },
-    "lindsay": {
-        "concern": "children's safety and needing parental approval before leaving",
-        "resources": [
-            "We are contacting the children's parents right now and will relay their instructions to you",
-            "A child-safe transport with car seats is being dispatched to your address",
-            "The evacuation center has a dedicated children's area with trained childcare staff",
-        ],
-    },
-    "michelle": {
-        "concern": "protecting property and believing the house is prepared",
-        "resources": [
-            "A fire-protection crew will apply retardant spray to your house immediately after you leave",
-            "We are stationing a monitoring team on your street to protect properties during the evacuation",
-            "Your address is flagged for priority property-protection — a crew is assigned specifically to your block",
-        ],
-    },
-    "ross": {
-        "concern": "stranded passengers with mobility issues who cannot move on their own",
-        "resources": [
-            "A wheelchair-accessible van is being dispatched to your GPS location right now",
-            "Two EMTs with stretchers and mobility equipment will arrive within 15 minutes",
-            "We are clearing Route 5 as a dedicated evacuation corridor for your vehicle",
-        ],
-    },
-}
+def _get_persona_block(policy_name: str) -> str:
+    """Build a persona summary from config/personas.py for the selected policy."""
+    persona = PERSONA.get(policy_name)
+    if persona and isinstance(persona, dict):
+        desc = persona.get("description", "")
+        info = persona.get("information", "")
+        return f"{desc}\n{info}"
+    return "general resident in need of evacuation assistance"
 
 
 def _build_iql_rag_prompt(
@@ -190,10 +161,7 @@ def _build_iql_rag_prompt(
     rag_examples: List[Dict],
     max_context: int = 10,
 ) -> str:
-    policy_info = _POLICY_RESOURCES.get(policy_name, {})
-    concern = policy_info.get("concern", "general safety")
-    resources = policy_info.get("resources", [])
-    resources_block = "\n".join(f"  - {r}" for r in resources)
+    persona_block = _get_persona_block(policy_name)
 
     context = history[-max_context:]
     context_text = "\n".join(
@@ -212,18 +180,13 @@ def _build_iql_rag_prompt(
 
     instruction = (
         "You are an emergency OPERATOR on a wildfire evacuation call.\n\n"
-        f"The IQL policy selector has identified this resident's likely "
-        f"core concern: {concern}.\n\n"
-        f"RESOURCES YOU CAN OFFER (use these — they are real and authorized):\n"
-        f"{resources_block}\n\n"
+        "The IQL policy selector has identified that this resident most "
+        f"closely matches the following profile:\n{persona_block}\n\n"
         "RULES:\n"
         "- 1-3 sentences maximum. Be specific, not vague.\n"
-        #"- Name the resource: what vehicle, what team, what timeline.\n"
-        #"- Do NOT say 'help is on the way' without specifying WHAT help.\n"
-        #"- Do NOT repeat yourself. Each reply must advance the conversation.\n" - try one run with these instructions commented out
         "- Calm, professional tone. No role labels or meta commentary.\n"
-        "- Only use information revealed in the conversation — adapt the "
-        "resources to what the resident has actually said."
+        "- Only use information revealed in the conversation — adapt your "
+        "response to what the resident has actually said."
     )
 
     prompt = f"{instruction}\n\nConversation so far:\n{context_text}\n\n"
@@ -239,14 +202,9 @@ def _build_iql_global_rag_prompt(
     rag_examples: List[Dict],
     max_context: int = 6,
 ) -> str:
-    """Identical to _build_iql_rag_prompt (same instruction, context window,
-    concern/resources, and formatting) — the only difference is that the
-    RAG examples come from the global successful-operator corpus, so each
-    example dict has "text" instead of "resident_text"/"operator_text"."""
-    policy_info = _POLICY_RESOURCES.get(policy_name, {})
-    concern = policy_info.get("concern", "general safety")
-    resources = policy_info.get("resources", [])
-    resources_block = "\n".join(f"  - {r}" for r in resources)
+    """Same as _build_iql_rag_prompt but RAG examples come from the global
+    successful-operator corpus (dicts with "text" key)."""
+    persona_block = _get_persona_block(policy_name)
 
     context = history[-max_context:]
     context_text = "\n".join(
@@ -269,15 +227,13 @@ def _build_iql_global_rag_prompt(
 
     instruction = (
         "You are an emergency OPERATOR on a wildfire evacuation call.\n\n"
-        f"The IQL policy selector has identified this resident's likely "
-        f"core concern: {concern}.\n\n"
-        f"RESOURCES YOU CAN OFFER (use these — they are real and authorized):\n"
-        f"{resources_block}\n\n"
+        "The IQL policy selector has identified that this resident most "
+        f"closely matches the following profile:\n{persona_block}\n\n"
         "RULES:\n"
         "- 1-3 sentences maximum. Be specific, not vague.\n"
         "- Calm, professional tone. No role labels or meta commentary.\n"
-        "- Only use information revealed in the conversation — adapt the "
-        "resources to what the resident has actually said."
+        "- Only use information revealed in the conversation — adapt your "
+        "response to what the resident has actually said."
     )
 
     prompt = f"{instruction}\n\nConversation so far:\n{context_text}\n\n"
@@ -287,9 +243,48 @@ def _build_iql_global_rag_prompt(
     return prompt.strip()
 
 
+def _build_iql_persona_only_prompt(
+    history: List[Dict],
+    policy_name: str,
+    max_context: int = 10,
+) -> str:
+    """IQL policy selection + persona profile, no RAG examples."""
+    persona_block = _get_persona_block(policy_name)
+
+    context = history[-max_context:]
+    context_text = "\n".join(
+        f"{'Operator' if h['role'] == 'operator' else 'Resident'}: "
+        f"{h['text'].strip()}"
+        for h in context
+    )
+
+    instruction = (
+        "You are an emergency OPERATOR on a wildfire evacuation call.\n\n"
+        "The IQL policy selector has identified that this resident most "
+        f"closely matches the following profile:\n{persona_block}\n\n"
+        "RULES:\n"
+        "- 1-3 sentences maximum. Be specific, not vague.\n"
+        "- Calm, professional tone. No role labels or meta commentary.\n"
+        "- Only use information revealed in the conversation — adapt your "
+        "response to what the resident has actually said."
+    )
+
+    return (
+        f"{instruction}\n\nConversation so far:\n{context_text}\n\n"
+        "Operator:"
+    ).strip()
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # Public API
 # ═══════════════════════════════════════════════════════════════════════════════
+
+VALID_STRATEGIES = (
+    "zero_shot", "rag_successful",
+    "iql_rag", "iql_global_rag", "iql_persona_only",
+    "random_persona", "random_no_persona",
+)
+
 
 def generate_operator_reply(
     history: List[Dict[str, str]],
@@ -305,14 +300,11 @@ def generate_operator_reply(
     Parameters
     ----------
     history      : Conversation so far.
-    strategy     : "zero_shot" | "rag_successful" | "iql_rag" |
-                   "iql_global_rag"
+    strategy     : One of VALID_STRATEGIES.
     temperature  : Sampling temperature.
     max_tokens   : Max response length.
-    policy_name  : Required for "iql_rag" and "iql_global_rag" strategies.
-    rag_examples : Retrieved examples.  For "rag_successful" / "iql_global_rag"
-                   these are dicts with "text".  For "iql_rag" they have
-                   "resident_text" and "operator_text".
+    policy_name  : Required for IQL / random strategies.
+    rag_examples : Retrieved examples (not used by persona-only / random).
 
     Returns
     -------
@@ -334,10 +326,22 @@ def generate_operator_reply(
             raise ValueError("policy_name is required for 'iql_global_rag' strategy.")
         prompt = _build_iql_global_rag_prompt(history, policy_name, rag_examples or [])
 
+    elif strategy == "iql_persona_only":
+        if policy_name is None:
+            raise ValueError("policy_name is required for 'iql_persona_only'.")
+        prompt = _build_iql_persona_only_prompt(history, policy_name)
+
+    elif strategy == "random_persona":
+        if policy_name is None:
+            raise ValueError("policy_name is required for 'random_persona'.")
+        prompt = _build_iql_persona_only_prompt(history, policy_name)
+
+    elif strategy == "random_no_persona":
+        prompt = _build_zero_shot_prompt(history)
+
     else:
         raise ValueError(
-            f"Unknown strategy '{strategy}'.  "
-            "Use 'zero_shot', 'rag_successful', 'iql_rag', or 'iql_global_rag'."
+            f"Unknown strategy '{strategy}'. Use one of: {VALID_STRATEGIES}"
         )
 
     reply = call_llm(

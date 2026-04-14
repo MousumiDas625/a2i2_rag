@@ -34,6 +34,7 @@ USAGE:
 """
 
 import json
+import random
 import sys
 import time
 from datetime import datetime
@@ -42,13 +43,24 @@ from typing import Dict, List, Optional
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from config.settings import (
-    MAX_TURNS, K_EXAMPLES, RUNS_DIR,
+    MAX_TURNS, K_EXAMPLES, RUNS_DIR, LABEL_MAP_FILE,
     DEFAULT_TEMPERATURE_OP, DEFAULT_TEMPERATURE_RES,
     DEFAULT_MAX_TOKENS_OP, DEFAULT_MAX_TOKENS_RES,
 )
 from simulation.resident_simulator import generate_resident_reply
 from simulation.operator_generator import generate_operator_reply
 from simulation.decision import is_successful_session
+
+_RANDOM_POLICY_NAMES: Optional[List[str]] = None
+
+
+def _get_random_policy_names() -> List[str]:
+    """Load IQL policy names once for random selection."""
+    global _RANDOM_POLICY_NAMES
+    if _RANDOM_POLICY_NAMES is None:
+        label_map = json.load(open(LABEL_MAP_FILE))
+        _RANDOM_POLICY_NAMES = sorted(label_map.keys())
+    return _RANDOM_POLICY_NAMES
 
 
 def run_conversation(
@@ -63,6 +75,7 @@ def run_conversation(
     interactive_resident: bool = False,
     selector=None,
     run_id: Optional[str] = None,
+    output_dir: Optional[Path] = None,
 ) -> Dict:
     """
     Run one full conversation.
@@ -71,7 +84,8 @@ def run_conversation(
     ----------
     resident_name        : Persona key (e.g. "ross", "bob").
     strategy             : "zero_shot" | "rag_successful" | "iql_rag" |
-                           "iql_global_rag"
+                           "iql_global_rag" | "iql_persona_only" |
+                           "random_persona" | "random_no_persona"
     seed_text            : Optional first operator line.
     max_turns            : Hard cap on total turns.
     k_examples           : Number of RAG examples per operator turn.
@@ -102,11 +116,18 @@ def run_conversation(
         from retrieval.rag_retrieval import retrieve_from_successful
         if selector is None:
             selector = IQLPolicySelector()
+    if strategy == "iql_persona_only":
+        from retrieval.policy_selector import IQLPolicySelector
+        if selector is None:
+            selector = IQLPolicySelector()
     if strategy == "rag_successful":
         from retrieval.rag_retrieval import retrieve_from_successful
 
     ts = run_id or datetime.now().strftime("%Y%m%d_%H%M%S")
-    out_dir = RUNS_DIR / f"run_{ts}"
+    if output_dir is not None:
+        out_dir = Path(output_dir)
+    else:
+        out_dir = RUNS_DIR / f"run_{ts}"
     out_dir.mkdir(parents=True, exist_ok=True)
 
     # ── Seed history ──────────────────────────────────────────────────────────
@@ -165,6 +186,20 @@ def run_conversation(
                     q_str = ", ".join(f"{k}: {v:.3f}" for k, v in qvals.items())
                     print(f"[TURN {turn_idx}] Policy: {best_policy} (global RAG) | Q: {{{q_str}}}")
 
+                elif strategy == "iql_persona_only":
+                    best_policy, qvals = selector.select_policy(history)
+                    policy_name = best_policy
+                    q_str = ", ".join(f"{k}: {v:.3f}" for k, v in qvals.items())
+                    print(f"[TURN {turn_idx}] Policy: {best_policy} (persona only) | Q: {{{q_str}}}")
+
+                elif strategy == "random_persona":
+                    policy_name = random.choice(_get_random_policy_names())
+                    print(f"[TURN {turn_idx}] Random policy: {policy_name} (with persona)")
+
+                elif strategy == "random_no_persona":
+                    policy_name = random.choice(_get_random_policy_names())
+                    print(f"[TURN {turn_idx}] Random policy: {policy_name} (no persona, zero-shot prompt)")
+
                 elif strategy == "rag_successful":
                     last_res = next(
                         (h["text"] for h in reversed(history) if h["role"] == "resident"), ""
@@ -183,8 +218,10 @@ def run_conversation(
                 entry: dict = {"role": "operator", "text": op_reply}
                 if policy_name:
                     entry["selected_policy"] = policy_name
-                    entry["q_values"] = qvals
-                    entry["examples_used"] = rag_examples
+                    if strategy in ("iql_rag", "iql_global_rag", "iql_persona_only"):
+                        entry["q_values"] = qvals
+                    if rag_examples:
+                        entry["examples_used"] = rag_examples
                 history.append(entry)
 
             print(f"Operator: {history[-1]['text']}\n")
@@ -229,6 +266,10 @@ def run_conversation(
                     (h["text"] for h in reversed(history) if h["role"] == "resident"), ""
                 )
                 rag_examples_close = retrieve_from_successful(last_res, k=k_examples)
+            elif strategy == "iql_persona_only" and selector is not None:
+                policy_close, qvals_close = selector.select_policy(history)
+            elif strategy in ("random_persona", "random_no_persona"):
+                policy_close = random.choice(_get_random_policy_names())
             elif strategy == "rag_successful":
                 last_res = next(
                     (h["text"] for h in reversed(history) if h["role"] == "resident"), ""
