@@ -1,27 +1,30 @@
 #!/usr/bin/env python3
 """
-run_all_final.py — Run All 7 Experiments (3 runs per persona)
-==============================================================
+run_all_final.py — Run All 7 Experiments with Detailed Metrics
+===============================================================
 
-Creates:
-    data/runs/exp_final/
-    ├── exp1_zero_shot/           # conversations + summary.json
+Creates a timestamped output folder:
+    data/runs/exp_run_<TIMESTAMP>/
+    ├── exp1_zero_shot/           # conversation JSONL files + summary.json
     ├── exp2_rag_successful/
     ├── exp3_iql_rag/
     ├── exp4_iql_global_rag/
     ├── exp5_iql_persona_only/
     ├── exp6_random_persona/
     ├── exp7_random_no_persona/
-    └── final_summary.json        # combined results across all experiments
+    ├── final_summary.json        # combined results across all experiments
+    └── detailed_metrics.csv      # per-conversation metrics with persona types
 
 USAGE:
     python experiments/run_all_final.py
     python experiments/run_all_final.py --residents ross,bob
-    python experiments/run_all_final.py --runs 3
+    python experiments/run_all_final.py --runs 5
     python experiments/run_all_final.py --experiments 1,3,5
+    python experiments/run_all_final.py --test
 """
 
 import argparse
+import csv
 import json
 import sys
 import time
@@ -30,7 +33,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from config.personas import PERSONA
-from config.settings import RUNS_DIR
+from config.settings import RUNS_DIR, RESIDENTS_LIST
 from simulation.conversation_loop import run_conversation
 from simulation.llm_client import token_tracker
 
@@ -47,6 +50,12 @@ EXPERIMENTS = {
     7: {"name": "exp7_random_no_persona", "strategy": "random_no_persona", "needs_iql": False},
 }
 
+TRAINING_PERSONAS = set(RESIDENTS_LIST)
+
+
+def _persona_type(name: str) -> str:
+    return "training" if name in TRAINING_PERSONAS else "new"
+
 
 def _build_summary(exp_name, results, residents):
     summary = {
@@ -57,14 +66,30 @@ def _build_summary(exp_name, results, residents):
     for res in residents:
         runs = [r for r in results if r["resident"] == res]
         succ = sum(r["success"] for r in runs)
+        avg_turns = round(sum(r["turns"] for r in runs) / len(runs), 1) if runs else 0
+        avg_time = round(sum(r["elapsed_seconds"] for r in runs) / len(runs), 1) if runs else 0
         summary["per_resident"][res] = {
+            "persona_type": _persona_type(res),
             "runs": len(runs),
             "successes": succ,
             "success_rate": round(succ / len(runs), 4) if runs else 0,
+            "avg_turns": avg_turns,
+            "avg_time_seconds": avg_time,
         }
     total_succ = sum(r["success"] for r in results)
     summary["overall_success_rate"] = (
         round(total_succ / len(results), 4) if results else 0
+    )
+
+    training_runs = [r for r in results if _persona_type(r["resident"]) == "training"]
+    new_runs = [r for r in results if _persona_type(r["resident"]) == "new"]
+    summary["training_persona_success_rate"] = (
+        round(sum(r["success"] for r in training_runs) / len(training_runs), 4)
+        if training_runs else 0
+    )
+    summary["new_persona_success_rate"] = (
+        round(sum(r["success"] for r in new_runs) / len(new_runs), 4)
+        if new_runs else 0
     )
     return summary
 
@@ -103,11 +128,14 @@ def run_experiment(exp_num, exp_dir, residents, runs, max_turns, selector, seed)
 
             all_results.append({
                 "experiment": exp_name,
+                "strategy": strategy,
                 "resident": resident,
+                "persona_type": _persona_type(resident),
                 "run": run_idx,
                 "status": result["status"],
                 "success": result["success"],
                 "turns": result["turns"],
+                "elapsed_seconds": result.get("elapsed_seconds", 0),
                 "path": result["path"],
             })
 
@@ -116,23 +144,40 @@ def run_experiment(exp_num, exp_dir, residents, runs, max_turns, selector, seed)
     summary_file.write_text(json.dumps(summary, indent=2, ensure_ascii=False))
 
     print(f"\n  --- {exp_name} ---")
+    print(f"  {'Resident':<14} {'Type':<10} {'Rate':<12} {'Avg Turns':<12} {'Avg Time'}")
+    print(f"  {'-'*14} {'-'*10} {'-'*12} {'-'*12} {'-'*10}")
     for name, data in summary["per_resident"].items():
-        print(f"  {name:<14} {data['successes']}/{data['runs']} = {data['success_rate']:.1%}")
-    print(f"  {'OVERALL':<14} {summary['overall_success_rate']:.1%}")
+        ptype = data["persona_type"]
+        rate = f"{data['successes']}/{data['runs']} = {data['success_rate']:.0%}"
+        print(f"  {name:<14} {ptype:<10} {rate:<12} {data['avg_turns']:<12} {data['avg_time_seconds']:.1f}s")
+    print(f"\n  Overall: {summary['overall_success_rate']:.0%}  |  "
+          f"Training: {summary['training_persona_success_rate']:.0%}  |  "
+          f"New: {summary['new_persona_success_rate']:.0%}")
     print(f"  Summary → {summary_file}\n")
 
-    return summary
+    return summary, all_results
+
+
+def _write_csv(all_rows, csv_path):
+    fieldnames = [
+        "experiment", "strategy", "resident", "persona_type",
+        "run", "status", "success", "turns", "elapsed_seconds", "path",
+    ]
+    with open(csv_path, "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(all_rows)
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Run all experiments (3 runs/persona) into exp_final/"
+        description="Run all experiments (5 runs/persona) with detailed metrics"
     )
     parser.add_argument("--residents", default=None,
                         help="Comma-separated residents (default: all 10)")
-    parser.add_argument("--runs", type=int, default=3,
-                        help="Runs per resident per experiment (default: 3)")
-    parser.add_argument("--max-turns", type=int, default=16)
+    parser.add_argument("--runs", type=int, default=5,
+                        help="Runs per resident per experiment (default: 5)")
+    parser.add_argument("--max-turns", type=int, default=15)
     parser.add_argument("--experiments", default=None,
                         help="Comma-separated exp numbers to run, e.g. '1,3,5' "
                              "(default: all 1-7)")
@@ -159,8 +204,11 @@ def main():
         else sorted(EXPERIMENTS.keys())
     )
 
-    exp_dir = RUNS_DIR / "exp_final"
+    ts_label = datetime.now().strftime("%Y%m%dT%H%M%S")
+    exp_dir = RUNS_DIR / f"exp_run_{ts_label}"
     exp_dir.mkdir(parents=True, exist_ok=True)
+
+    print(f"\n  Output folder: {exp_dir}\n")
 
     needs_iql = any(EXPERIMENTS[n]["needs_iql"] for n in exp_nums)
     selector = None
@@ -171,20 +219,30 @@ def main():
 
     ts_start = datetime.now()
     all_summaries = {}
+    all_csv_rows = []
 
     for exp_num in exp_nums:
         t0 = time.time()
-        summary = run_experiment(
+        summary, rows = run_experiment(
             exp_num, exp_dir, residents, args.runs, args.max_turns,
             selector, args.seed,
         )
         elapsed = time.time() - t0
         summary["elapsed_seconds"] = round(elapsed, 1)
         all_summaries[EXPERIMENTS[exp_num]["name"]] = summary
+        all_csv_rows.extend(rows)
 
+    # ── Write detailed CSV ────────────────────────────────────────────────────
+    csv_path = exp_dir / "detailed_metrics.csv"
+    _write_csv(all_csv_rows, csv_path)
+
+    # ── Write final JSON summary ──────────────────────────────────────────────
     final = {
         "timestamp": ts_start.strftime("%Y%m%dT%H%M%S"),
+        "output_folder": str(exp_dir),
         "residents": residents,
+        "training_personas": sorted(TRAINING_PERSONAS),
+        "new_personas": sorted(set(residents) - TRAINING_PERSONAS),
         "runs_per_resident": args.runs,
         "experiments": all_summaries,
         "token_usage": {
@@ -198,15 +256,26 @@ def main():
     final_file = exp_dir / "final_summary.json"
     final_file.write_text(json.dumps(final, indent=2, ensure_ascii=False))
 
-    print("\n" + "=" * 60)
+    # ── Print final table ─────────────────────────────────────────────────────
+    print("\n" + "=" * 80)
     print("  FINAL RESULTS — ALL EXPERIMENTS")
-    print("=" * 60)
+    print("=" * 80)
+    header = f"  {'Experiment':<30} {'Overall':<10} {'Training':<10} {'New':<10} {'Time'}"
+    print(header)
+    print(f"  {'-'*30} {'-'*10} {'-'*10} {'-'*10} {'-'*10}")
     for name, s in all_summaries.items():
-        rate = s["overall_success_rate"]
-        elapsed = s.get("elapsed_seconds", "?")
-        print(f"  {name:<30} {rate:.1%}   ({elapsed}s)")
-    print(f"\n  Full summary → {final_file}")
-    print("=" * 60)
+        overall = f"{s['overall_success_rate']:.0%}"
+        train = f"{s['training_persona_success_rate']:.0%}"
+        new = f"{s['new_persona_success_rate']:.0%}"
+        elapsed = f"{s.get('elapsed_seconds', '?')}s"
+        print(f"  {name:<30} {overall:<10} {train:<10} {new:<10} {elapsed}")
+
+    print(f"\n  Training personas : {', '.join(sorted(TRAINING_PERSONAS))}")
+    print(f"  New personas      : {', '.join(sorted(set(residents) - TRAINING_PERSONAS))}")
+    print(f"\n  Conversations     → {exp_dir}/")
+    print(f"  Detailed CSV      → {csv_path}")
+    print(f"  JSON summary      → {final_file}")
+    print("=" * 80)
 
     token_tracker.print_summary()
 

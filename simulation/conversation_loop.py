@@ -124,6 +124,8 @@ def run_conversation(
     if strategy == "rag_successful":
         from retrieval.rag_retrieval import retrieve_from_successful
 
+    t_start = time.time()
+
     ts = run_id or datetime.now().strftime("%Y%m%d_%H%M%S")
     if output_dir is not None:
         out_dir = Path(output_dir)
@@ -308,9 +310,11 @@ def run_conversation(
 
     success = bool(final_decision)
     status = "SUCCESS" if success else "FAILURE"
+    elapsed = round(time.time() - t_start, 2)
     cost = token_tracker.total_cost_usd()
     print(
-        f"[FINAL] {status} | {len(history)} turns | → {out_file.name} | "
+        f"[FINAL] {status} | {len(history)} turns | {elapsed}s | "
+        f"→ {out_file.name} | "
         f"tokens so far: {token_tracker.total_tokens:,} (${cost:.6f})"
     )
 
@@ -318,6 +322,7 @@ def run_conversation(
         "status": status,
         "success": int(success),
         "turns": len(history),
+        "elapsed_seconds": elapsed,
         "history": history,
         "path": str(out_file),
     }

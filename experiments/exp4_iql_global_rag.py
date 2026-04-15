@@ -47,7 +47,7 @@ def main():
     )
     parser.add_argument("--residents", default=None)
     parser.add_argument("--runs", type=int, default=5)
-    parser.add_argument("--max-turns", type=int, default=16)
+    parser.add_argument("--max-turns", type=int, default=15)
     parser.add_argument("--tag", default="",
                         help="Optional tag appended to the run folder name")
     parser.add_argument("--seed", default="Hello, this is the fire department. "

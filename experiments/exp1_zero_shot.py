@@ -42,7 +42,7 @@ def main():
                         help="Comma-separated residents (default: all)")
     parser.add_argument("--runs", type=int, default=5,
                         help="Conversations per resident (default: 5)")
-    parser.add_argument("--max-turns", type=int, default=16)
+    parser.add_argument("--max-turns", type=int, default=15)
     parser.add_argument("--seed", default="Hello, this is the fire department. "
                         "We need you to evacuate immediately.")
     args = parser.parse_args()

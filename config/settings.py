@@ -89,7 +89,7 @@ OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "llama3")
 OPENAI_API_KEY  = os.environ.get("OPENAI_API_KEY", "")
 OPENAI_BASE_URL = os.environ.get("OPENAI_BASE_URL", "https://api.openai.com/v1")
 OPENAI_MODEL    = os.environ.get("OPENAI_MODEL", "gpt-4o-mini")
-OPENAI_PROJECT  = os.environ.get("OPENAI_PROJECT", "mousumi-policy-sel")
+OPENAI_PROJECT  = os.environ.get("OPENAI_PROJECT", "")
 
 # --- Resolved model name (used by llm_client) --------------------------------
 LLM_MODEL = os.environ.get("LLM_MODEL", OLLAMA_MODEL if LLM_PROVIDER == "ollama" else OPENAI_MODEL)

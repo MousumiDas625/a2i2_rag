@@ -160,7 +160,9 @@ def _call_openai(
             },
             timeout=timeout,
         )
-        r.raise_for_status()
+        if not r.ok:
+            print(f"[ERR] OpenAI {r.status_code}: {r.text[:300]}")
+            return ""
         data = r.json()
 
         usage = data.get("usage")
