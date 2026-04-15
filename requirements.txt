@@ -6,6 +6,7 @@ faiss-cpu
 pandas
 numpy
 requests
+python-dotenv
 tqdm
 matplotlib
 scikit-learn

@@ -32,6 +32,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from config.personas import PERSONA
 from config.settings import RUNS_DIR
 from simulation.conversation_loop import run_conversation
+from simulation.llm_client import token_tracker
 
 SEED = ("Hello, this is the fire department. "
         "We need you to evacuate immediately.")
@@ -136,13 +137,21 @@ def main():
                         help="Comma-separated exp numbers to run, e.g. '1,3,5' "
                              "(default: all 1-7)")
     parser.add_argument("--seed", default=SEED)
+    parser.add_argument("--test", action="store_true",
+                        help="Quick test mode: 1 run with first resident only "
+                             "(overrides --runs and --residents)")
     args = parser.parse_args()
+
+    if args.test:
+        args.runs = 1
 
     residents = (
         [r.strip().lower() for r in args.residents.split(",")]
         if args.residents
         else sorted(PERSONA.keys())
     )
+    if args.test and not args.residents:
+        residents = residents[:1]
 
     exp_nums = (
         [int(x.strip()) for x in args.experiments.split(",")]
@@ -178,6 +187,13 @@ def main():
         "residents": residents,
         "runs_per_resident": args.runs,
         "experiments": all_summaries,
+        "token_usage": {
+            "prompt_tokens": token_tracker.prompt_tokens,
+            "completion_tokens": token_tracker.completion_tokens,
+            "total_tokens": token_tracker.total_tokens,
+            "num_llm_calls": token_tracker.num_calls,
+            "estimated_cost_usd": round(token_tracker.total_cost_usd(), 6),
+        },
     }
     final_file = exp_dir / "final_summary.json"
     final_file.write_text(json.dumps(final, indent=2, ensure_ascii=False))
@@ -191,6 +207,8 @@ def main():
         print(f"  {name:<30} {rate:.1%}   ({elapsed}s)")
     print(f"\n  Full summary → {final_file}")
     print("=" * 60)
+
+    token_tracker.print_summary()
 
 
 if __name__ == "__main__":

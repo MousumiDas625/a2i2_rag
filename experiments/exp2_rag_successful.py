@@ -39,6 +39,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from config.personas import PERSONA
 from config.settings import RUNS_DIR
 from simulation.conversation_loop import run_conversation
+from simulation.llm_client import token_tracker
 
 
 def main():
@@ -120,6 +121,7 @@ def main():
         print(f"  {name:<14} {data['successes']}/{data['runs']} = {data['success_rate']:.1%}")
     print(f"  {'OVERALL':<14} {summary['overall_success_rate']:.1%}")
     print(f"\n  Summary → {summary_file}")
+    token_tracker.print_summary()
 
 
 if __name__ == "__main__":

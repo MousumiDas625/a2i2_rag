@@ -50,6 +50,7 @@ from config.settings import (
 from simulation.resident_simulator import generate_resident_reply
 from simulation.operator_generator import generate_operator_reply
 from simulation.decision import is_successful_session
+from simulation.llm_client import token_tracker
 
 _RANDOM_POLICY_NAMES: Optional[List[str]] = None
 
@@ -307,7 +308,11 @@ def run_conversation(
 
     success = bool(final_decision)
     status = "SUCCESS" if success else "FAILURE"
-    print(f"[FINAL] {status} | {len(history)} turns | → {out_file.name}")
+    cost = token_tracker.total_cost_usd()
+    print(
+        f"[FINAL] {status} | {len(history)} turns | → {out_file.name} | "
+        f"tokens so far: {token_tracker.total_tokens:,} (${cost:.6f})"
+    )
 
     return {
         "status": status,

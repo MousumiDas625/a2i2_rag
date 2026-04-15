@@ -16,6 +16,9 @@ To switch the LLM backend (e.g. from Ollama/llama3 to OpenAI GPT-4):
 import os
 import torch
 from pathlib import Path
+from dotenv import load_dotenv
+
+load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # PROJECT ROOT
@@ -76,7 +79,7 @@ EMBED_MODEL_NAME = "all-MiniLM-L6-v2"
 # ═══════════════════════════════════════════════════════════════════════════════
 # Supported providers: "ollama", "openai"
 # To add a new provider, implement a handler in simulation/llm_client.py
-LLM_PROVIDER = os.environ.get("LLM_PROVIDER", "ollama")
+LLM_PROVIDER = os.environ.get("LLM_PROVIDER", "openai")
 
 # --- Ollama settings ---------------------------------------------------------
 OLLAMA_URL   = os.environ.get("OLLAMA_URL", "http://localhost:11434/api/generate")
@@ -85,7 +88,8 @@ OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "llama3")
 # --- OpenAI settings ---------------------------------------------------------
 OPENAI_API_KEY  = os.environ.get("OPENAI_API_KEY", "")
 OPENAI_BASE_URL = os.environ.get("OPENAI_BASE_URL", "https://api.openai.com/v1")
-OPENAI_MODEL    = os.environ.get("OPENAI_MODEL", "gpt-4o")
+OPENAI_MODEL    = os.environ.get("OPENAI_MODEL", "gpt-4o-mini")
+OPENAI_PROJECT  = os.environ.get("OPENAI_PROJECT", "mousumi-policy-sel")
 
 # --- Resolved model name (used by llm_client) --------------------------------
 LLM_MODEL = os.environ.get("LLM_MODEL", OLLAMA_MODEL if LLM_PROVIDER == "ollama" else OPENAI_MODEL)
@@ -126,8 +130,8 @@ MAX_TURNS         = 15
 K_EXAMPLES        = 2     # ICL few-shot examples per operator turn
 MAX_REFUSAL_STREAK = 5    # consecutive refusals → stop
 
-DEFAULT_TEMPERATURE_OP  = 0.2
-DEFAULT_TEMPERATURE_RES = 0.2
+DEFAULT_TEMPERATURE_OP  = 0.4
+DEFAULT_TEMPERATURE_RES = 0.4
 DEFAULT_MAX_TOKENS_OP   = 64
 DEFAULT_MAX_TOKENS_RES  = 64
 
