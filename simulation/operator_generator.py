@@ -19,8 +19,12 @@ PURPOSE:
                         corpus instead of the per-policy index.
     5. IQL+PERSONA-ONLY — IQL policy selection + persona profile, NO RAG.
     6. RANDOM+PERSONA  — Random policy selection + persona profile, no RAG.
-    7. RANDOM (no persona) — Random policy selected for tracking only;
-                             prompt is identical to zero-shot.
+    7. RANDOM+LOCAL RAG — Random training policy each turn; few-shot examples
+       retrieved only from that policy's per-policy index (no persona block).
+    8. RANDOM+LOCAL RAG+PERSONA — Same random policy + local retrieval, plus
+       the matching persona profile in the prompt.
+    9. RANDOM+PERSONA+GLOBAL RAG — Random policy + persona; examples from the
+       global successful-operator corpus (like IQL global RAG, but random match).
 
 HOW IT WORKS:
     Each strategy has a dedicated prompt builder.  The public function
@@ -225,6 +229,102 @@ def _build_iql_global_rag_prompt(
     return prompt.strip()
 
 
+def _build_random_local_rag_persona_prompt(
+    history: List[Dict],
+    policy_name: str,
+    rag_examples: List[Dict],
+    max_context: int = 10,
+) -> str:
+    """Same structure as IQL+per-policy RAG, but policy is random (not IQL)."""
+    persona_block = _get_persona_block(policy_name)
+
+    context = history[-max_context:]
+    context_text = "\n".join(
+        f"{'Operator' if h['role'] == 'operator' else 'Resident'}: "
+        f"{h['text'].strip()}"
+        for h in context
+    )
+
+    example_lines = []
+    for ex in rag_examples[:3]:
+        r_line = ex.get("resident_text", "").strip()
+        o_line = ex.get("operator_text", "").strip()
+        if r_line and o_line:
+            example_lines.append(f"  Resident: {r_line}\n  Operator: {o_line}")
+    ex_block = "\n\n".join(example_lines) if example_lines else None
+
+    instruction = (
+        "You are an emergency OPERATOR on a wildfire evacuation call.\n\n"
+        "For this turn, one training operator policy profile was chosen "
+        "uniformly at random (not from a learned selector). The profile below "
+        "is for conditioning only; the resident on the line may or may not match "
+        f"it closely.\n{persona_block}\n\n"
+        "Reference examples below were retrieved from that policy's dialogue "
+        "index.\n\n"
+        "RULES:\n"
+        "- 1-3 sentences maximum. Be specific, not vague.\n"
+        "- Calm, professional tone. No role labels or meta commentary.\n"
+        "- Only use information revealed in the conversation — adapt your "
+        "response to what the resident has actually said."
+    )
+
+    prompt = f"{instruction}\n\nConversation so far:\n{context_text}\n\n"
+    if ex_block:
+        prompt += f"Reference style examples:\n{ex_block}\n\n"
+    prompt += "Operator:"
+    return prompt.strip()
+
+
+def _build_random_persona_global_rag_prompt(
+    history: List[Dict],
+    policy_name: str,
+    rag_examples: List[Dict],
+    max_context: int = 6,
+) -> str:
+    """Like IQL+global RAG persona prompt, but policy selection is random."""
+    persona_block = _get_persona_block(policy_name)
+
+    context = history[-max_context:]
+    context_text = "\n".join(
+        f"{'Operator' if h['role'] == 'operator' else 'Resident'}: "
+        f"{h['text'].strip()}"
+        for h in context
+    )
+
+    example_lines = []
+    for ex in rag_examples[:3]:
+        r_line = ex.get("resident_text", "").strip()
+        o_line = ex.get("operator_text", "").strip()
+        if r_line and o_line:
+            example_lines.append(f"  Resident: {r_line}\n  Operator: {o_line}")
+        else:
+            text = ex.get("text", "").strip()
+            if text:
+                example_lines.append(f"  Operator: {text}")
+    ex_block = "\n\n".join(example_lines) if example_lines else None
+
+    instruction = (
+        "You are an emergency OPERATOR on a wildfire evacuation call.\n\n"
+        "For this turn, one training operator policy profile was chosen "
+        "uniformly at random (not from a learned selector). The profile below "
+        "is for conditioning only; the resident on the line may or may not match "
+        f"it closely.\n{persona_block}\n\n"
+        "Reference examples below come from the global successful-operator "
+        "corpus (not restricted to that policy's index).\n\n"
+        "RULES:\n"
+        "- 1-3 sentences maximum. Be specific, not vague.\n"
+        "- Calm, professional tone. No role labels or meta commentary.\n"
+        "- Only use information revealed in the conversation — adapt your "
+        "response to what the resident has actually said."
+    )
+
+    prompt = f"{instruction}\n\nConversation so far:\n{context_text}\n\n"
+    if ex_block:
+        prompt += f"Reference style examples:\n{ex_block}\n\n"
+    prompt += "Operator:"
+    return prompt.strip()
+
+
 def _build_iql_persona_only_prompt(
     history: List[Dict],
     policy_name: str,
@@ -264,7 +364,8 @@ def _build_iql_persona_only_prompt(
 VALID_STRATEGIES = (
     "zero_shot", "rag_successful",
     "iql_rag", "iql_global_rag", "iql_persona_only",
-    "random_persona", "random_no_persona",
+    "random_persona",
+    "random_local_rag", "random_local_rag_persona", "random_persona_global_rag",
 )
 
 
@@ -285,8 +386,9 @@ def generate_operator_reply(
     strategy     : One of VALID_STRATEGIES.
     temperature  : Sampling temperature.
     max_tokens   : Max response length.
-    policy_name  : Required for IQL / random strategies.
-    rag_examples : Retrieved examples (not used by persona-only / random).
+    policy_name  : Required for IQL / random (persona or RAG) strategies.
+    rag_examples : Retrieved examples (not used by zero-shot / persona-only /
+                   random_persona without RAG).
 
     Returns
     -------
@@ -318,8 +420,22 @@ def generate_operator_reply(
             raise ValueError("policy_name is required for 'random_persona'.")
         prompt = _build_iql_persona_only_prompt(history, policy_name)
 
-    elif strategy == "random_no_persona":
-        prompt = _build_zero_shot_prompt(history)
+    elif strategy == "random_local_rag":
+        prompt = _build_rag_successful_prompt(history, rag_examples or [])
+
+    elif strategy == "random_local_rag_persona":
+        if policy_name is None:
+            raise ValueError("policy_name is required for 'random_local_rag_persona'.")
+        prompt = _build_random_local_rag_persona_prompt(
+            history, policy_name, rag_examples or []
+        )
+
+    elif strategy == "random_persona_global_rag":
+        if policy_name is None:
+            raise ValueError("policy_name is required for 'random_persona_global_rag'.")
+        prompt = _build_random_persona_global_rag_prompt(
+            history, policy_name, rag_examples or []
+        )
 
     else:
         raise ValueError(

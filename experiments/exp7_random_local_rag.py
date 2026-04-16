@@ -1,25 +1,17 @@
 #!/usr/bin/env python3
 """
-exp7_random_no_persona.py — Experiment 7: Random Policy Selection, No Persona
-===============================================================================
+exp7_random_local_rag.py — Experiment 7: Random policy + per-policy (local) RAG
+=================================================================================
 
 PURPOSE:
-    Baseline.  At each operator turn:
-        1. A policy is chosen UNIFORMLY AT RANDOM from the 5 core training
-           personas (bob, niki, lindsay, michelle, ross).
-        2. The operator prompt is IDENTICAL to zero-shot — no persona
-           information, no RAG.  The random policy is tracked for analysis only.
-
-    Comparing Exp6 (random + persona) vs Exp7 (random, no persona)
-    isolates whether persona information itself helps, even when the
-    policy selection is random.
-
-PREREQUISITES:
-    - label_map.json must exist (from I01/I02).
+    Each operator turn:
+        1. Choose a training policy uniformly at random (same pool as exp6).
+        2. Retrieve few-shot examples from THAT policy's FAISS index only.
+        3. Operator prompt matches exp2-style RAG (no persona block).
 
 USAGE:
-    python experiments/exp7_random_no_persona.py
-    python experiments/exp7_random_no_persona.py --residents ross,bob --runs 3
+    python experiments/exp7_random_local_rag.py
+    python experiments/exp7_random_local_rag.py --residents ross,bob --runs 3
 """
 
 import argparse
@@ -36,7 +28,7 @@ from simulation.conversation_loop import run_conversation
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Experiment 7: Random policy selection, no persona (baseline)"
+        description="Experiment 7: Random policy + local per-policy RAG (no persona)"
     )
     parser.add_argument("--residents", default=None)
     parser.add_argument("--runs", type=int, default=5)
@@ -53,14 +45,14 @@ def main():
     )
 
     ts = datetime.now().strftime("%Y%m%dT%H%M%S")
-    folder = f"exp7_random_no_persona_{ts}" + (f"_{args.tag}" if args.tag else "")
+    folder = f"exp7_random_local_rag_{ts}" + (f"_{args.tag}" if args.tag else "")
     exp_dir = RUNS_DIR / folder
     exp_dir.mkdir(parents=True, exist_ok=True)
 
     all_results: list = []
 
     print("=" * 60)
-    print(f"  EXPERIMENT 7 — RANDOM POLICY, NO PERSONA")
+    print("  EXPERIMENT 7 — RANDOM POLICY + LOCAL RAG (NO PERSONA)")
     print(f"  Residents: {', '.join(residents)}")
     print(f"  Runs/resident: {args.runs}")
     print("=" * 60)
@@ -71,13 +63,14 @@ def main():
             print(f"\n--- {rid} ---")
             result = run_conversation(
                 resident_name=resident,
-                strategy="random_no_persona",
+                strategy="random_local_rag",
                 seed_text=args.seed,
                 max_turns=args.max_turns,
                 run_id=rid,
+                output_dir=exp_dir,
             )
             all_results.append({
-                "experiment": "random_no_persona",
+                "experiment": "random_local_rag",
                 "resident": resident,
                 "run": run_idx,
                 "status": result["status"],
@@ -87,7 +80,7 @@ def main():
             })
 
     summary = {
-        "experiment": "exp7_random_no_persona",
+        "experiment": "exp7_random_local_rag",
         "timestamp": ts,
         "results": all_results,
         "per_resident": {},
@@ -109,7 +102,7 @@ def main():
     summary_file.write_text(json.dumps(summary, indent=2, ensure_ascii=False))
 
     print(f"\n{'=' * 60}")
-    print("  RANDOM POLICY, NO PERSONA RESULTS")
+    print("  RANDOM + LOCAL RAG RESULTS")
     print(f"{'=' * 60}")
     for name, data in summary["per_resident"].items():
         print(f"  {name:<14} {data['successes']}/{data['runs']} = {data['success_rate']:.1%}")

@@ -85,7 +85,8 @@ def run_conversation(
     resident_name        : Persona key (e.g. "ross", "bob").
     strategy             : "zero_shot" | "rag_successful" | "iql_rag" |
                            "iql_global_rag" | "iql_persona_only" |
-                           "random_persona" | "random_no_persona"
+                           "random_persona" | "random_local_rag" |
+                           "random_local_rag_persona" | "random_persona_global_rag"
     seed_text            : Optional first operator line.
     max_turns            : Hard cap on total turns.
     k_examples           : Number of RAG examples per operator turn.
@@ -121,6 +122,10 @@ def run_conversation(
         if selector is None:
             selector = IQLPolicySelector()
     if strategy == "rag_successful":
+        from retrieval.rag_retrieval import retrieve_from_successful
+    if strategy in ("random_local_rag", "random_local_rag_persona"):
+        from retrieval.rag_retrieval import retrieve_topk_pairs
+    if strategy == "random_persona_global_rag":
         from retrieval.rag_retrieval import retrieve_from_successful
 
     ts = run_id or datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -196,9 +201,38 @@ def run_conversation(
                     policy_name = random.choice(_get_random_policy_names())
                     print(f"[TURN {turn_idx}] Random policy: {policy_name} (with persona)")
 
-                elif strategy == "random_no_persona":
+                elif strategy == "random_local_rag":
                     policy_name = random.choice(_get_random_policy_names())
-                    print(f"[TURN {turn_idx}] Random policy: {policy_name} (no persona, zero-shot prompt)")
+                    last_res = next(
+                        (h["text"] for h in reversed(history) if h["role"] == "resident"), ""
+                    )
+                    rag_examples = retrieve_topk_pairs(policy_name, last_res, k=k_examples)
+                    print(
+                        f"[TURN {turn_idx}] Random policy: {policy_name} "
+                        f"(local per-policy RAG, no persona block)"
+                    )
+
+                elif strategy == "random_local_rag_persona":
+                    policy_name = random.choice(_get_random_policy_names())
+                    last_res = next(
+                        (h["text"] for h in reversed(history) if h["role"] == "resident"), ""
+                    )
+                    rag_examples = retrieve_topk_pairs(policy_name, last_res, k=k_examples)
+                    print(
+                        f"[TURN {turn_idx}] Random policy: {policy_name} "
+                        f"(local per-policy RAG + persona)"
+                    )
+
+                elif strategy == "random_persona_global_rag":
+                    policy_name = random.choice(_get_random_policy_names())
+                    last_res = next(
+                        (h["text"] for h in reversed(history) if h["role"] == "resident"), ""
+                    )
+                    rag_examples = retrieve_from_successful(last_res, k=k_examples)
+                    print(
+                        f"[TURN {turn_idx}] Random policy: {policy_name} "
+                        f"(persona + global successful RAG)"
+                    )
 
                 elif strategy == "rag_successful":
                     last_res = next(
@@ -218,7 +252,9 @@ def run_conversation(
                 entry: dict = {"role": "operator", "text": op_reply}
                 if policy_name:
                     entry["selected_policy"] = policy_name
-                    if strategy in ("iql_rag", "iql_global_rag", "iql_persona_only"):
+                    if strategy in (
+                        "iql_rag", "iql_global_rag", "iql_persona_only",
+                    ):
                         entry["q_values"] = qvals
                     if rag_examples:
                         entry["examples_used"] = rag_examples
@@ -268,8 +304,30 @@ def run_conversation(
                 rag_examples_close = retrieve_from_successful(last_res, k=k_examples)
             elif strategy == "iql_persona_only" and selector is not None:
                 policy_close, qvals_close = selector.select_policy(history)
-            elif strategy in ("random_persona", "random_no_persona"):
+            elif strategy == "random_persona":
                 policy_close = random.choice(_get_random_policy_names())
+            elif strategy == "random_local_rag":
+                policy_close = random.choice(_get_random_policy_names())
+                last_res = next(
+                    (h["text"] for h in reversed(history) if h["role"] == "resident"), ""
+                )
+                rag_examples_close = retrieve_topk_pairs(
+                    policy_close, last_res, k=k_examples
+                )
+            elif strategy == "random_local_rag_persona":
+                policy_close = random.choice(_get_random_policy_names())
+                last_res = next(
+                    (h["text"] for h in reversed(history) if h["role"] == "resident"), ""
+                )
+                rag_examples_close = retrieve_topk_pairs(
+                    policy_close, last_res, k=k_examples
+                )
+            elif strategy == "random_persona_global_rag":
+                policy_close = random.choice(_get_random_policy_names())
+                last_res = next(
+                    (h["text"] for h in reversed(history) if h["role"] == "resident"), ""
+                )
+                rag_examples_close = retrieve_from_successful(last_res, k=k_examples)
             elif strategy == "rag_successful":
                 last_res = next(
                     (h["text"] for h in reversed(history) if h["role"] == "resident"), ""
@@ -287,7 +345,10 @@ def run_conversation(
             close_entry: dict = {"role": "operator", "text": close_reply}
             if policy_close:
                 close_entry["selected_policy"] = policy_close
-                close_entry["q_values"] = qvals_close
+                if qvals_close:
+                    close_entry["q_values"] = qvals_close
+                if rag_examples_close:
+                    close_entry["examples_used"] = rag_examples_close
             history.append(close_entry)
             print(f"Operator (closing): {close_reply}\n")
             break
