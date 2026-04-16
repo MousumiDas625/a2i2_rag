@@ -61,6 +61,18 @@ from simulation.llm_client import call_llm
 FALLBACK_REPLY = "Please evacuate immediately; conditions can worsen quickly."
 
 
+def _operator_instruction_no_persona() -> str:
+    """Same intro + RULES as IQL operator prompts, without persona / selector."""
+    return (
+        "You are an emergency OPERATOR on a wildfire evacuation call.\n\n"
+        "RULES:\n"
+        "- 1-3 sentences maximum. Be specific, not vague.\n"
+        "- Calm, professional tone. No role labels or meta commentary.\n"
+        "- Only use information revealed in the conversation — adapt your "
+        "response to what the resident has actually said."
+    )
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # Prompt Builders
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -75,23 +87,7 @@ def _build_zero_shot_prompt(
         for h in context
     )
 
-    instruction = (
-        "You are the OPERATOR talking to a RESIDENT during a wildfire "
-        "evacuation call.\n"
-        "Read the conversation so far, then produce the next operator reply.\n"
-        "CRITICAL RULES:\n"
-        "- KEEP IT BRIEF: Maximum 1-2 short sentences (20-30 words total).\n"
-        "- Get straight to the point - no elaboration.\n"
-        "- Calm, professional, evacuation-focused.\n"
-        "- If resident resists, emphasize urgency/danger; if cooperative, "
-        "give clear next steps.\n"
-        "- No role labels, no meta commentary.\n"
-        "- Avoid gendered pronouns.\n"
-        "- Be direct and concise.\n"
-        "- Only use information revealed in the conversation - do not assume "
-        "anything about the resident.\n"
-        "Use the similar examples for style guidance."
-    )
+    instruction = _operator_instruction_no_persona()
     return (
         f"{instruction}\n\n"
         f"Conversation so far:\n{context_text}\n\n"
@@ -111,38 +107,24 @@ def _build_rag_successful_prompt(
         for h in context
     )
 
-    ex_lines = []
+    example_lines = []
     for ex in examples[:3]:
-        text = ex.get("text", "").strip()
-        if text:
-            ex_lines.append(f"  - {text}")
-    examples_text = "\n".join(ex_lines) if ex_lines else "  (no examples available)"
+        r_line = ex.get("resident_text", "").strip()
+        o_line = ex.get("operator_text", "").strip()
+        if r_line and o_line:
+            example_lines.append(f"  Resident: {r_line}\n  Operator: {o_line}")
+        else:
+            text = ex.get("text", "").strip()
+            if text:
+                example_lines.append(f"  Operator: {text}")
+    ex_block = "\n\n".join(example_lines) if example_lines else None
 
-    instruction = (
-        "You are the OPERATOR talking to a RESIDENT during a wildfire "
-        "evacuation call.\n"
-        f"Use the following sample utterances of the operator: "
-        f"{examples_text} for style guidance.\n"
-        "Read the conversation so far, then produce the next operator reply.\n"
-        "CRITICAL RULES:\n"
-        "- KEEP IT BRIEF: Maximum 1-2 short sentences (20-30 words total).\n"
-        "- Get straight to the point - no elaboration.\n"
-        "- Calm, professional, evacuation-focused.\n"
-        "- If resident resists, emphasize urgency/danger; if cooperative, "
-        "give clear next steps.\n"
-        "- No role labels, no meta commentary.\n"
-        "- Avoid gendered pronouns.\n"
-        "- Be direct and concise.\n"
-        "- Only use information revealed in the conversation - do not assume "
-        "anything about the resident.\n"
-        "Use the similar examples for style guidance."
-    )
-    return (
-        f"{instruction}\n\n"
-        f"Conversation so far:\n{context_text}\n\n"
-        f"Example utterances of the operator:\n{examples_text}\n\n"
-        "Operator:"
-    ).strip()
+    instruction = _operator_instruction_no_persona()
+    prompt = f"{instruction}\n\nConversation so far:\n{context_text}\n\n"
+    if ex_block:
+        prompt += f"Reference style examples:\n{ex_block}\n\n"
+    prompt += "Operator:"
+    return prompt.strip()
 
 
 def _get_persona_block(policy_name: str) -> str:

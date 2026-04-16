@@ -58,7 +58,7 @@ def main():
     parser.add_argument("--reps", type=int, default=1,
                         help="Repetitions per (seed, resident) pair")
     parser.add_argument("--run-id", required=True)
-    parser.add_argument("--max-turns", type=int, default=16)
+    parser.add_argument("--max-turns", type=int, default=15)
     args = parser.parse_args()
 
     residents = [r.strip().lower() for r in args.residents.split(",")]

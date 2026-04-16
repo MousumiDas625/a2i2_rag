@@ -19,6 +19,9 @@ USAGE:
     python experiments/run_all_final.py --residents ross,bob
     python experiments/run_all_final.py --runs 3
     python experiments/run_all_final.py --experiments 1,3,5
+    python experiments/run_all_final.py --experiments all --output-name "hopefully final"
+    # Quick smoke test: first two residents (alphabetically), one run each, all exps:
+    python experiments/run_all_final.py --experiments all --sample-residents 2 --runs 1
 """
 
 import argparse
@@ -27,6 +30,7 @@ import sys
 import time
 from datetime import datetime
 from pathlib import Path
+from typing import List, Optional
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from config.personas import PERSONA
@@ -123,34 +127,74 @@ def run_experiment(exp_num, exp_dir, residents, runs, max_turns, selector, seed)
     return summary
 
 
+def _parse_experiment_list(raw: Optional[str]) -> List[int]:
+    if raw is None or str(raw).strip().lower() == "all":
+        return sorted(EXPERIMENTS.keys())
+    nums = []
+    for x in str(raw).split(","):
+        x = x.strip()
+        if not x:
+            continue
+        if x.lower() == "all":
+            return sorted(EXPERIMENTS.keys())
+        nums.append(int(x))
+    return nums
+
+
 def main():
     parser = argparse.ArgumentParser(
-        description="Run all experiments (3 runs/persona) into exp_final/"
+        description="Run experiments into data/runs/<output-name>/ (default: exp_final)"
     )
     parser.add_argument("--residents", default=None,
-                        help="Comma-separated residents (default: all 10)")
+                        help="Comma-separated residents (default: all personas; "
+                             "overrides --sample-residents)")
+    parser.add_argument(
+        "--sample-residents",
+        type=int,
+        default=None,
+        metavar="N",
+        help="When --residents is omitted, use only the first N personas "
+             "(alphabetical by key), e.g. 2 for a quick test",
+    )
     parser.add_argument("--runs", type=int, default=3,
                         help="Runs per resident per experiment (default: 3)")
-    parser.add_argument("--max-turns", type=int, default=16)
-    parser.add_argument("--experiments", default=None,
-                        help="Comma-separated exp numbers to run, e.g. '1,3,5' "
-                             "(default: all 1-7)")
+    parser.add_argument("--max-turns", type=int, default=15)
+    parser.add_argument(
+        "--experiments",
+        default=None,
+        help="Comma-separated exp numbers 1-7, or the word 'all' (default: all)",
+    )
+    parser.add_argument(
+        "--output-name",
+        default="exp_final",
+        help='Folder name under data/runs/ (default: exp_final). Example: "hopefully final"',
+    )
     parser.add_argument("--seed", default=SEED)
     args = parser.parse_args()
 
-    residents = (
-        [r.strip().lower() for r in args.residents.split(",")]
-        if args.residents
-        else sorted(PERSONA.keys())
-    )
+    all_keys = sorted(PERSONA.keys())
+    if args.residents:
+        residents = [r.strip().lower() for r in args.residents.split(",") if r.strip()]
+    elif args.sample_residents is not None:
+        n = max(1, args.sample_residents)
+        residents = all_keys[: min(n, len(all_keys))]
+    else:
+        residents = all_keys
 
-    exp_nums = (
-        [int(x.strip()) for x in args.experiments.split(",")]
-        if args.experiments
-        else sorted(EXPERIMENTS.keys())
-    )
+    unknown = [r for r in residents if r not in PERSONA]
+    if unknown:
+        parser.error(f"Unknown resident(s): {unknown}. Known: {all_keys}")
 
-    exp_dir = RUNS_DIR / "exp_final"
+    try:
+        exp_nums = _parse_experiment_list(args.experiments)
+    except ValueError as e:
+        parser.error(f"Invalid --experiments: {args.experiments!r} ({e})")
+
+    bad_exp = [n for n in exp_nums if n not in EXPERIMENTS]
+    if bad_exp:
+        parser.error(f"Invalid experiment number(s): {bad_exp}. Valid: {sorted(EXPERIMENTS)}")
+
+    exp_dir = RUNS_DIR / args.output_name.strip()
     exp_dir.mkdir(parents=True, exist_ok=True)
 
     needs_iql = any(EXPERIMENTS[n]["needs_iql"] for n in exp_nums)

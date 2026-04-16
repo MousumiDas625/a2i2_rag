@@ -293,7 +293,8 @@ def run_conversation(
             break
         elif decision is False:
             final_decision = False
-            print("[X] Resident refused / turn limit reached.")
+            reason = (closing_msg or "").strip() or "Session unsuccessful."
+            print(f"[X] {reason}")
             break
 
         operator_next = True

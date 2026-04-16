@@ -7,19 +7,14 @@ PURPOSE:
     SUCCESS (resident agreed to evacuate) or FAILURE (persistent refusal
     or turn-limit reached).
 
-HOW IT WORKS:
-    Primary judge: LLM reasoning.
-        The last N turns are sent to the LLM with a classification prompt.
-        The LLM replies with one token: SUCCESS, FAILURE, or UNCERTAIN.
+HOW IT WORKS (current):
+    • Primary: an LLM reads recent dialogue and decides whether the
+      RESIDENT has committed to evacuating (yes / no / unclear).
+    • Hard stops: keyword-based refusal streak; turn cap.
 
-    Secondary signal: keyword-based refusal counting.
-        If the resident's last 6 turns contain 5+ refusal keywords,
-        we declare FAILURE regardless of the LLM's opinion.
-
-    Rules:
-        • Early stop only on SUCCESS (resident clearly agreed).
-        • FAILURE only after persistent refusal OR turn-limit exceeded.
-        • Returns (decision, closing_message).
+    On SUCCESS, conversation_loop still appends a final operator line via
+    generate_operator_reply (clarifying / wrap-up).  The string returned
+    here is only a short acknowledgement hint for logs / metadata.
 
 USAGE:
     from simulation.decision import is_successful_session
@@ -48,10 +43,13 @@ FAILURE_KEYWORDS = [
     "i'm not going", "not evacuating", "will not leave",
 ]
 
+# --- Legacy regex agreement gate (kept, not used by current success path) ---
 AGREEMENT_PATTERNS = [
     r"\bokay\b.*\b(go|leave|head out|evacuate|get ready|pack)",
     r"\balright\b.*\b(go|leave|head out|evacuate|get ready|pack)",
     r"\bfine\b.*\b(go|leave|head out|evacuate|i'll)",
+    r"\bokay\b[,.\s]+\s*i\s+will\b",
+    r"\balright\b[,.\s]+\s*i\s+will\b",
     r"\bi'll go\b", r"\bi will go\b",
     r"\bi'll leave\b", r"\bi will leave\b",
     r"\blet me get ready\b", r"\blet me pack\b",
@@ -75,15 +73,22 @@ AGREEMENT_PATTERNS = [
     r"\bcount (me|us) in\b",
     r"\bokay\b.*\b(that works|makes sense|sounds good)\b",
     r"\bi('ll| will) (come|follow|meet)\b",
+    r"\bi('ll| will)\s+make\s+sure\b.*\b(evacuat|leave|go|route|safe)\b",
 ]
+
+RECENT_RESIDENT_AGREEMENT_WINDOW = 5
 
 
 def _resident_explicitly_agreed(utterances: List[Dict[str, str]]) -> bool:
-    """Check if the last resident utterance contains explicit agreement."""
-    for u in reversed(utterances):
-        if u["role"] == "resident":
-            text = u["text"].lower()
-            return any(re.search(p, text) for p in AGREEMENT_PATTERNS)
+    """Legacy regex gate — retained for reference; success path uses LLM."""
+    res_texts = [
+        u["text"].lower()
+        for u in utterances
+        if u["role"] == "resident"
+    ][-RECENT_RESIDENT_AGREEMENT_WINDOW:]
+    for text in res_texts:
+        if any(re.search(p, text) for p in AGREEMENT_PATTERNS):
+            return True
     return False
 
 
@@ -109,6 +114,7 @@ def _norm_conversation(
 def _build_judge_prompt(
     utterances: List[Dict[str, str]], window: int
 ) -> str:
+    """Legacy strict session judge prompt (unused by current success path)."""
     snippet = "\n".join(
         f"{u['role'].capitalize()}: {u['text']}"
         for u in utterances[-window:]
@@ -149,12 +155,72 @@ def _build_judge_prompt(
 def _query_llm_decision(
     utterances: List[Dict[str, str]], window: int
 ) -> Optional[bool]:
+    """Legacy full-session LLM judge (unused by current success path)."""
     prompt = _build_judge_prompt(utterances, window)
     output = call_llm(prompt, temperature=0.0, max_tokens=8, timeout=20)
     output = output.lower().strip()
     if re.search(r"\bsuccess\b", output):
         return True
     if re.search(r"\bfailure\b", output):
+        return False
+    return None
+
+
+def _build_resident_evacuation_commitment_prompt(
+    utterances: List[Dict[str, str]], window: int,
+) -> str:
+    """LLM prompt focused only on whether the resident committed to evacuating."""
+    snippet = "\n".join(
+        f"{u['role'].capitalize()}: {u['text']}"
+        for u in utterances[-window:]
+    )
+    res_lines = [
+        f"- {u['text'].strip()}"
+        for u in utterances
+        if u["role"] == "resident"
+    ]
+    resident_only = "\n".join(res_lines)[-2000:]
+    return (
+        "You are judging ONLY the RESIDENT's side of a wildfire evacuation "
+        "phone call.\n\n"
+        "Question: Has the resident COMMITTED to evacuating or following "
+        "through on leaving (e.g. will go, will get ready, will head out, "
+        "will follow the route, agreed to the plan and intends to leave)?\n"
+        "- If the resident's LAST message is only thanks / politeness but "
+        "an EARLIER resident line already committed to evacuating, answer "
+        "YES.\n"
+        "- If the resident is still only asking questions, stalling, or "
+        "refusing without commitment, answer NO.\n"
+        "- If you truly cannot tell, answer UNCLEAR.\n\n"
+        "Recent dialogue (both roles):\n"
+        f"{snippet}\n\n"
+        "All resident lines (most recent last):\n"
+        f"{resident_only}\n\n"
+        "Answer with EXACTLY ONE WORD: YES, NO, or UNCLEAR.\n\n"
+        "Answer:"
+    )
+
+
+def _query_llm_resident_evacuation_commitment(
+    utterances: List[Dict[str, str]], window: int,
+) -> Optional[bool]:
+    """
+    True  = resident committed to evacuate.
+    False = resident has not committed (still resisting / only questions).
+    None  = model output unclear.
+    """
+    prompt = _build_resident_evacuation_commitment_prompt(utterances, window)
+    output = call_llm(prompt, temperature=0.0, max_tokens=6, timeout=25)
+    out = output.lower().strip()
+    if re.search(r"\byes\b", out) or re.search(r"\bagreed\b", out):
+        return True
+    if re.search(r"\bno\b", out) or re.search(r"\bnot\b.*\b(agreed|commit)", out):
+        return False
+    if "unclear" in out or "uncertain" in out:
+        return None
+    if "yes" in out.replace(" ", ""):
+        return True
+    if "no" in out[:8]:
         return False
     return None
 
@@ -191,16 +257,23 @@ def is_successful_session(
         any(kw in line for kw in FAILURE_KEYWORDS) for line in recent_res
     )
 
-    # Hard gate: resident's last utterance must contain explicit agreement
-    resident_agreed = _resident_explicitly_agreed(utterances)
+    # --- LEGACY success path (commented; replaced by LLM resident judge) ---
+    # resident_agreed = _resident_explicitly_agreed(utterances)
+    # llm_decision = _query_llm_decision(utterances, window=tail_window)
+    # if allow_early_stop and resident_agreed and llm_decision is not False:
+    #     return True, (
+    #         "Acknowledged. Assistance will arrive shortly — "
+    #         "please stay safe while leaving the area."
+    #     )
 
-    # LLM judge (only trust SUCCESS if resident actually said they'll go)
-    llm_decision = _query_llm_decision(utterances, window=tail_window)
-
-    if allow_early_stop and llm_decision is True and resident_agreed:
+    # Primary: LLM judges whether the resident committed to evacuating
+    resident_commit = _query_llm_resident_evacuation_commitment(
+        utterances, window=tail_window
+    )
+    if allow_early_stop and resident_commit is True:
         return True, (
-            "Acknowledged. Assistance will arrive shortly — "
-            "please stay safe while leaving the area."
+            "Acknowledged. Continue following official evacuation routes; "
+            "the operator will give a brief closing message next."
         )
 
     if refusal_hits >= MAX_REFUSAL_STREAK:
