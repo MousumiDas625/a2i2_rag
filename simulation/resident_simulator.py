@@ -77,16 +77,28 @@ def _build_resident_prompt(
         )
     elif op_turns <= 4:
         reveal_instruction = (
-            "You have stated your concern. Maintain your position, but ONLY if "
-            "the operator has not yet addressed your specific stated concern. "
-            "If the operator has named or acknowledged the specific thing you "
-            "need (from your barrier above), agree to evacuate now."
+            "You have stated your concern. Hold your position firmly. "
+            "Generic urgency ('it's dangerous', 'please leave now', 'the fire is close') "
+            "is NOT enough — you have heard that already. "
+            "Only agree if the operator has directly and specifically resolved the exact "
+            "barrier you stated (from your barrier description above). "
+            "If they have only mentioned urgency or named your concern without solving it, "
+            "push back once more."
+        )
+    elif op_turns <= 6:
+        reveal_instruction = (
+            "The operator has made several attempts. You are wearing down slightly, "
+            "but you still need your core concern to be concretely addressed — not just "
+            "acknowledged. If the operator has clearly and specifically resolved the thing "
+            "you need (from your barrier above), agree now. "
+            "If they are still giving only general urgency or vague reassurance, "
+            "state one final time what you need. Do NOT add new demands."
         )
     else:
         reveal_instruction = (
-            "The operator has made multiple attempts. If they have addressed "
-            "your concern at all — even partially — show you are coming around "
-            "and agree to evacuate. Do NOT keep escalating or adding new demands."
+            "The operator has made many attempts. If they have addressed your core "
+            "concern at all in a concrete way, agree to evacuate. "
+            "Do NOT keep escalating or adding new demands beyond your stated barrier."
         )
 
     system_block = (
@@ -101,7 +113,7 @@ def _build_resident_prompt(
         f"- {reveal_instruction}\n"
         "- Generic urgency alone ('it's dangerous', 'please leave now') does "
         "NOT move you. Push back when the operator gives only generic urgency.\n"
-        "- Express your concern once or twice, then be open to agreeing.\n"
+        "- Express your concern 2-3 times before agreeing. Do not cave to the first or second generic push.\n"
         "- IMPORTANT: Do NOT escalate to new demands beyond your stated barrier. "
         "Do not ask for specific timelines, guarantees, or proof beyond what your "
         "barrier requires. Once your stated concern has been addressed, agree.\n"

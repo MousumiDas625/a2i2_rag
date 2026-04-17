@@ -38,8 +38,10 @@ def _embed_state(model: SentenceTransformer, texts: list) -> np.ndarray:
         return np.zeros(
             (model.get_sentence_embedding_dimension(),), dtype=np.float32
         )
-    embs = model.encode(texts, convert_to_numpy=True, normalize_embeddings=True)
-    return np.mean(embs, axis=0).astype(np.float32)
+    # Concatenate texts before encoding — matches training (I01_build_iql_dataset)
+    joined = " ".join(texts)
+    emb = model.encode([joined], convert_to_numpy=True, normalize_embeddings=True)
+    return emb[0].astype(np.float32)
 
 
 class IQLPolicySelector:

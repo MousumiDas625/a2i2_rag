@@ -115,7 +115,7 @@ IQL_NOISE_STD          = 0.10   # Gaussian noise injected into states during tra
 IQL_ORTHO_WEIGHT       = 0.05   # orthogonality regularisation for trainable embeddings
 IQL_TARGET_TAU         = 0.005  # EMA smoothing for target V-network
 IQL_GRAD_CLIP          = 1.0    # max gradient norm
-IQL_INFERENCE_TEMP     = 0.9    # softmax temperature for policy selection
+IQL_INFERENCE_TEMP     = 0.7    # softmax temperature for policy selection
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # DATASET CONFIG
