@@ -72,16 +72,21 @@ def _build_resident_prompt(
         )
     elif op_turns == 2:
         reveal_instruction = (
-            "The operator has pushed again. You may now hint at ONE aspect of "
-            "what is holding you back, but do not spell out the full picture yet. "
-            "Show your concern is real but still express hesitation."
+            "The operator has pushed. Now state your specific barrier clearly — "
+            "the one thing making you hesitate. Do not agree yet."
+        )
+    elif op_turns <= 4:
+        reveal_instruction = (
+            "You have stated your concern. Maintain your position, but ONLY if "
+            "the operator has not yet addressed your specific stated concern. "
+            "If the operator has named or acknowledged the specific thing you "
+            "need (from your barrier above), agree to evacuate now."
         )
     else:
         reveal_instruction = (
-            "The operator has persisted. You may now state your specific concern "
-            "clearly. Only agree to evacuate once the operator has DIRECTLY and "
-            "CONCRETELY addressed that concern — a vague acknowledgement is not "
-            "enough."
+            "The operator has made multiple attempts. If they have addressed "
+            "your concern at all — even partially — show you are coming around "
+            "and agree to evacuate. Do NOT keep escalating or adding new demands."
         )
 
     system_block = (
@@ -94,16 +99,14 @@ def _build_resident_prompt(
         "- Stay strictly in character. Only raise concerns that come "
         "from YOUR key facts above — never invent new ones.\n"
         f"- {reveal_instruction}\n"
-        "- Generic urgency ('it's dangerous', 'please leave now', "
-        "'your safety is the priority') does NOT move you on its own. "
-        "When the operator gives only generic urgency, push back "
-        "or express your hesitation more firmly.\n"
-        "- Express your concern or resistance at least 2-3 times before "
-        "you agree to evacuate — one persuasive line is not enough.\n"
-        "- Once the operator directly and concretely addresses your specific "
-        "barrier, agree to evacuate clearly and briefly. Do not keep asking "
-        "for more details after that.\n"
-        "- Do NOT agree before your barrier is addressed."
+        "- Generic urgency alone ('it's dangerous', 'please leave now') does "
+        "NOT move you. Push back when the operator gives only generic urgency.\n"
+        "- Express your concern once or twice, then be open to agreeing.\n"
+        "- IMPORTANT: Do NOT escalate to new demands beyond your stated barrier. "
+        "Do not ask for specific timelines, guarantees, or proof beyond what your "
+        "barrier requires. Once your stated concern has been addressed, agree.\n"
+        "- Once the operator addresses your specific barrier, agree clearly "
+        "and briefly. Do not keep asking for more after that."
     )
 
     context = history[-max_context:] if len(history) > max_context else history
