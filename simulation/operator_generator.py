@@ -189,17 +189,13 @@ def _build_rag_successful_prompt(
 
     instruction = (
         "You are an emergency OPERATOR on a wildfire evacuation call.\n\n"
-        "Use the following sample utterances of the operator: "
-        "{examples_text} for style guidance.\n"
         "- 1-3 sentences maximum. Be specific, not vague.\n"
         "- Calm, professional tone. No role labels or meta commentary.\n"
-        # "- Only use information revealed in the conversation — adapt your "
-        # "response to what the resident has actually said."
     )
     return (
         f"{instruction}\n\n"
         f"Conversation so far:\n{context_text}\n\n"
-        f"Example utterances of the operator:\n{examples_text}\n\n"
+        f"Reference examples:\n{examples_text}\n\n"
         "Operator:"
     ).strip()
 
@@ -287,20 +283,17 @@ def _build_iql_global_rag_prompt(
         "You are an emergency OPERATOR on a wildfire evacuation call.\n\n"
         "The IQL policy selector recommends the following persuasion strategy "
         f"for this resident:\n\n{persona_block}\n\n"
-        "IMPORTANT: If the resident has already revealed a specific concern "
-        "in the conversation that differs from this strategy, respond to "
-        "THAT concern directly — the conversation always takes priority "
-        "over the strategy suggestion.\n\n"
+        "Apply this strategy to what the resident has most recently said. "
+        "Your response must address the specific concern or detail they raised — "
+        "not generic urgency that ignores what they actually told you.\n\n"
         "RULES:\n"
-        "- 1-3 sentences maximum. Be specific, not vague.\n"
-        "- Calm, professional tone. No role labels or meta commentary.\n"
-        "- Target the resident's specific barrier. Generic urgency alone "
-        "will not work.\n"
+        "- 1-3 sentences maximum. Calm, professional tone.\n"
+        "- No role labels, no meta commentary.\n"
     )
 
     prompt = f"{instruction}\n\nConversation so far:\n{context_text}\n\n"
     if ex_block:
-        prompt += f"Reference style examples:\n{ex_block}\n\n"
+        prompt += f"Reference examples:\n{ex_block}\n\n"
     prompt += "Operator:"
     return prompt.strip()
 
@@ -359,15 +352,12 @@ def _build_iql_persona_only_prompt(
         "You are an emergency OPERATOR on a wildfire evacuation call.\n\n"
         "The IQL policy selector recommends the following persuasion strategy "
         f"for this resident:\n\n{persona_block}\n\n"
-        "IMPORTANT: If the resident has already revealed a specific concern "
-        "in the conversation that differs from this strategy, respond to "
-        "THAT concern directly — the conversation always takes priority "
-        "over the strategy suggestion.\n\n"
+        "Apply this strategy to what the resident has most recently said. "
+        "Your response must address the specific concern or detail they raised — "
+        "not generic urgency that ignores what they actually told you.\n\n"
         "RULES:\n"
-        "- 1-3 sentences maximum. Be specific, not vague.\n"
-        "- Calm, professional tone. No role labels or meta commentary.\n"
-        "- Target the resident's specific barrier. Generic urgency alone "
-        "will not work.\n"
+        "- 1-3 sentences maximum. Calm, professional tone.\n"
+        "- No role labels, no meta commentary.\n"
     )
 
     return (
