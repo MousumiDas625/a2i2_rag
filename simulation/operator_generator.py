@@ -71,33 +71,34 @@ FALLBACK_REPLY = "Please evacuate immediately; conditions can worsen quickly."
 POLICY_STRATEGIES = {
     "bob": (
         "Strategy: Direct authority — state the danger is real and immediate with no softening. "
-        "This resident type is dismissive and work-focused. Generic warnings don't work. "
-        "Use a firm, unambiguous command: 'The fire will reach you in X minutes. You must leave NOW.' "
-        "No empathy needed — directness is the unlock."
+        "A firm, unambiguous command is the unlock: 'The fire will reach you in X minutes. "
+        "You must leave NOW.' No empathy needed — directness works. "
+        "Do not offer transport; this resident can leave independently."
     ),
     "niki": (
-        "Strategy: Severity confirmation + simple direction — confirm the fire IS serious with a "
-        "specific fact ('it's X miles away', 'it can reach you in under 30 minutes'), then give "
-        "ONE clear action to take. This resident type is cooperative but underestimates the threat. "
-        "Keep it brief. Don't over-explain — just confirm severity and point them in a direction."
+        "Strategy: Severity confirmation + explicit direction — confirm the fire IS serious with "
+        "a specific fact, then give ONE concrete action: name a direction ('head north'), "
+        "an exit route, or a guidance system ('follow the drone outside'). "
+        "This resident is cooperative but uncertain — confirmation of severity plus a clear "
+        "direction is the unlock. Do not just say 'gather essentials' — tell them WHERE to go."
     ),
     "lindsay": (
-        "Strategy: Authority + concrete plan — give explicit permission to act and provide a clear "
-        "destination or vehicle ('take them with you, a vehicle is on the way to X'). "
-        "This resident type is held back by responsibility — they need to feel they have authority "
-        "and a plan before they can move."
+        "Strategy: Authority + concrete plan — give explicit permission to act and name a clear "
+        "destination or transport ('take them with you, a vehicle is on the way to X'). "
+        "This resident is held back by responsibility for others — they need to feel authorised "
+        "to act and have a concrete plan before they can move."
     ),
     "michelle": (
-        "Strategy: Challenge safety logic directly — do NOT accept the resident's confidence in "
-        "their preparations or safety plan. Use either (a) a firm ultimatum: 'No preparation "
-        "can stop this fire — you must leave now', or (b) an empathy challenge: 'If this were "
-        "happening to a neighbour, would you tell them to stay?' Generic urgency will not work."
+        "Strategy: Challenge safety logic directly — do not accept the resident's confidence in "
+        "their preparations. Name what they have mentioned and explain why it will not stop this "
+        "fire. Use a firm ultimatum ('No preparation can stop this fire — you must leave now') "
+        "or an empathy challenge ('If this were your neighbour, would you tell them their "
+        "preparations were enough?'). Generic urgency does not work on this resident."
     ),
     "ross": (
-        "Strategy: Confirm immediate practical help — immediately state that specific assistance "
-        "(a vehicle, a rescue team, a route) is on the way. Do NOT keep repeating urgency. "
-        "This resident type already wants to leave but has a logistical blocker. "
-        "Address the logistics in your very first sentence."
+        "Strategy: Confirm immediate practical help — name the specific assistance on the way "
+        "(vehicle, rescue team, route). This resident wants to leave but has a logistical blocker. "
+        "Address logistics in your first sentence; do not spend turns repeating generic danger."
     ),
 }
 
@@ -238,20 +239,17 @@ def _build_iql_rag_prompt(
         "You are an emergency OPERATOR on a wildfire evacuation call.\n\n"
         "The IQL policy selector recommends the following persuasion strategy "
         f"for this resident:\n\n{persona_block}\n\n"
-        "IMPORTANT: If the resident has already revealed a specific concern "
-        "in the conversation that differs from this strategy, respond to "
-        "THAT concern directly — the conversation always takes priority "
-        "over the strategy suggestion.\n\n"
+        "Apply this strategy to what the resident has most recently said. "
+        "Your response must address the specific concern or detail they raised — "
+        "not generic urgency that ignores what they actually told you.\n\n"
         "RULES:\n"
-        "- 1-3 sentences maximum. Be specific, not vague.\n"
-        "- Calm, professional tone. No role labels or meta commentary.\n"
-        "- Target the resident's specific barrier. Generic urgency alone "
-        "will not work.\n"
+        "- 1-3 sentences maximum. Calm, professional tone.\n"
+        "- No role labels, no meta commentary.\n"
     )
 
     prompt = f"{instruction}\n\nConversation so far:\n{context_text}\n\n"
     if ex_block:
-        prompt += f"Reference style examples:\n{ex_block}\n\n"
+        prompt += f"Reference examples:\n{ex_block}\n\n"
     prompt += "Operator:"
     return prompt.strip()
 
@@ -398,18 +396,22 @@ def generate_operator_reply(
     max_tokens: int = DEFAULT_MAX_TOKENS_OP,
     policy_name: Optional[str] = None,
     rag_examples: Optional[List[Dict]] = None,
+    resident_name: Optional[str] = None,
 ) -> str:
     """
     Generate the next operator utterance.
 
     Parameters
     ----------
-    history      : Conversation so far.
-    strategy     : One of VALID_STRATEGIES.
-    temperature  : Sampling temperature.
-    max_tokens   : Max response length.
-    policy_name  : Required for IQL / random strategies.
-    rag_examples : Retrieved examples (not used by persona-only / random).
+    history       : Conversation so far.
+    strategy      : One of VALID_STRATEGIES.
+    temperature   : Sampling temperature.
+    max_tokens    : Max response length.
+    policy_name   : Required for IQL / random strategies.
+    rag_examples  : Retrieved examples (not used by persona-only / random).
+    resident_name : Accepted for API compatibility; not used in prompt building
+                    (operator only knows the IQL-selected policy strategy and
+                    what the resident has revealed in conversation).
 
     Returns
     -------

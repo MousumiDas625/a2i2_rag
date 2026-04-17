@@ -251,6 +251,7 @@ def run_conversation(
                     max_tokens=DEFAULT_MAX_TOKENS_OP,
                     policy_name=policy_name,
                     rag_examples=rag_examples,
+                    resident_name=resident_name,
                 )
 
                 entry: dict = {"role": "operator", "text": op_reply}
@@ -341,6 +342,7 @@ def run_conversation(
                 max_tokens=DEFAULT_MAX_TOKENS_OP,
                 policy_name=policy_close,
                 rag_examples=rag_examples_close,
+                resident_name=resident_name,
             )
             close_entry: dict = {"role": "operator", "text": close_reply}
             if policy_close:
