@@ -1,25 +1,27 @@
 #!/usr/bin/env python3
 """
-run_all_final.py — Run All 7 Experiments with Detailed Metrics
-===============================================================
+run_all_final.py — Run All 10 Experiments with Detailed Metrics
+================================================================
 
-Creates a timestamped output folder:
-    data/runs/exp_run_<TIMESTAMP>/
-    ├── exp1_zero_shot/           # conversation JSONL files + summary.json
+Creates a named output folder (default: exp_run_<TIMESTAMP>):
+    data/runs/<folder>/
+    ├── exp1_zero_shot/
     ├── exp2_rag_successful/
     ├── exp3_iql_rag/
     ├── exp4_iql_global_rag/
     ├── exp5_iql_persona_only/
     ├── exp6_random_persona/
-    ├── exp7_random_no_persona/
-    ├── final_summary.json        # combined results across all experiments
-    └── detailed_metrics.csv      # per-conversation metrics with persona types
+    ├── exp7_cross_policy/         # cross-policy matrix (all residents × all policies)
+    ├── exp8_random_rag/
+    ├── exp9_random_rag_persona/
+    ├── exp10_random_global_rag_persona/
+    ├── final_summary.json
+    └── detailed_metrics.csv
 
 USAGE:
     python experiments/run_all_final.py
-    python experiments/run_all_final.py --residents ross,bob
-    python experiments/run_all_final.py --runs 5
-    python experiments/run_all_final.py --experiments 1,3,5
+    python experiments/run_all_final.py --runs 5 --tag try1
+    python experiments/run_all_final.py --experiments 1,3,7
     python experiments/run_all_final.py --test
 """
 
@@ -40,14 +42,19 @@ from simulation.llm_client import token_tracker
 SEED = ("Hello, this is the fire department. "
         "We need you to evacuate immediately.")
 
+POLICIES = RESIDENTS_LIST  # 5 training policies used in cross-policy exp
+
 EXPERIMENTS = {
-    1: {"name": "exp1_zero_shot",         "strategy": "zero_shot",         "needs_iql": False},
-    2: {"name": "exp2_rag_successful",    "strategy": "rag_successful",    "needs_iql": False},
-    3: {"name": "exp3_iql_rag",           "strategy": "iql_rag",           "needs_iql": True},
-    4: {"name": "exp4_iql_global_rag",    "strategy": "iql_global_rag",    "needs_iql": True},
-    5: {"name": "exp5_iql_persona_only",  "strategy": "iql_persona_only",  "needs_iql": True},
-    6: {"name": "exp6_random_persona",    "strategy": "random_persona",    "needs_iql": False},
-    7: {"name": "exp7_random_no_persona", "strategy": "random_no_persona", "needs_iql": False},
+    1: {"name": "exp1_zero_shot",                  "strategy": "zero_shot",                "needs_iql": False, "is_cross_policy": False},
+    2: {"name": "exp2_rag_successful",             "strategy": "rag_successful",           "needs_iql": False, "is_cross_policy": False},
+    3: {"name": "exp3_iql_rag",                    "strategy": "iql_rag",                  "needs_iql": True,  "is_cross_policy": False},
+    4: {"name": "exp4_iql_global_rag",             "strategy": "iql_global_rag",           "needs_iql": True,  "is_cross_policy": False},
+    5: {"name": "exp5_iql_persona_only",           "strategy": "iql_persona_only",         "needs_iql": True,  "is_cross_policy": False},
+    6: {"name": "exp6_random_persona",             "strategy": "random_persona",           "needs_iql": False, "is_cross_policy": False},
+    7: {"name": "exp7_cross_policy",               "strategy": "fixed_policy",             "needs_iql": False, "is_cross_policy": True},
+    8: {"name": "exp8_random_rag",                 "strategy": "random_rag",               "needs_iql": False, "is_cross_policy": False},
+    9: {"name": "exp9_random_rag_persona",         "strategy": "random_rag_persona",       "needs_iql": False, "is_cross_policy": False},
+   10: {"name": "exp10_random_global_rag_persona", "strategy": "random_global_rag_persona","needs_iql": False, "is_cross_policy": False},
 }
 
 TRAINING_PERSONAS = set(RESIDENTS_LIST)
@@ -158,9 +165,123 @@ def run_experiment(exp_num, exp_dir, residents, runs, max_turns, selector, seed)
     return summary, all_results
 
 
+def run_cross_policy_experiment(exp_dir, residents, runs, max_turns, seed):
+    """Run every resident against every training policy `runs` times each."""
+    exp_name = "exp7_cross_policy"
+    sub_dir = exp_dir / exp_name
+    sub_dir.mkdir(parents=True, exist_ok=True)
+
+    all_results = []
+    matrix = {res: {pol: [] for pol in POLICIES} for res in residents}
+
+    total = len(residents) * len(POLICIES) * runs
+    done = 0
+
+    print(f"\n{'=' * 60}")
+    print(f"  EXP7 CROSS-POLICY MATRIX")
+    print(f"  Residents: {', '.join(residents)}")
+    print(f"  Policies : {', '.join(POLICIES)}")
+    print(f"  Runs/pair: {runs}  |  Total: {total}")
+    print(f"{'=' * 60}")
+
+    for resident in residents:
+        for policy in POLICIES:
+            for run_idx in range(1, runs + 1):
+                done += 1
+                rid = f"{exp_name}_{resident}_pol{policy}_run{run_idx}"
+                print(f"\n[{done}/{total}] {rid}")
+
+                result = run_conversation(
+                    resident_name=resident,
+                    strategy="fixed_policy",
+                    fixed_policy_name=policy,
+                    seed_text=seed,
+                    max_turns=max_turns,
+                    run_id=rid,
+                    output_dir=sub_dir / f"{resident}_x_{policy}",
+                )
+
+                matrix[resident][policy].append(result["success"])
+                all_results.append({
+                    "experiment": exp_name,
+                    "strategy": "fixed_policy",
+                    "resident": resident,
+                    "policy": policy,
+                    "persona_type": _persona_type(resident),
+                    "run": run_idx,
+                    "status": result["status"],
+                    "success": result["success"],
+                    "turns": result["turns"],
+                    "elapsed_seconds": result.get("elapsed_seconds", 0),
+                    "path": result["path"],
+                })
+
+    # Build per-resident summary aggregated across all policies
+    summary = {
+        "experiment": exp_name,
+        "results": all_results,
+        "per_resident": {},
+        "matrix": {},
+    }
+    for res in residents:
+        all_runs = [r for r in all_results if r["resident"] == res]
+        succ = sum(r["success"] for r in all_runs)
+        avg_turns = round(sum(r["turns"] for r in all_runs) / len(all_runs), 1) if all_runs else 0
+        summary["per_resident"][res] = {
+            "persona_type": _persona_type(res),
+            "runs": len(all_runs),
+            "successes": succ,
+            "success_rate": round(succ / len(all_runs), 4) if all_runs else 0,
+            "avg_turns": avg_turns,
+        }
+        summary["matrix"][res] = {
+            pol: {
+                "successes": sum(matrix[res][pol]),
+                "runs": len(matrix[res][pol]),
+                "rate": round(sum(matrix[res][pol]) / len(matrix[res][pol]), 4) if matrix[res][pol] else 0,
+            }
+            for pol in POLICIES
+        }
+
+    total_succ = sum(r["success"] for r in all_results)
+    summary["overall_success_rate"] = round(total_succ / len(all_results), 4) if all_results else 0
+    training_runs = [r for r in all_results if _persona_type(r["resident"]) == "training"]
+    new_runs      = [r for r in all_results if _persona_type(r["resident"]) == "new"]
+    summary["training_persona_success_rate"] = (
+        round(sum(r["success"] for r in training_runs) / len(training_runs), 4) if training_runs else 0
+    )
+    summary["new_persona_success_rate"] = (
+        round(sum(r["success"] for r in new_runs) / len(new_runs), 4) if new_runs else 0
+    )
+
+    summary_file = sub_dir / "summary.json"
+    summary_file.write_text(json.dumps(summary, indent=2, ensure_ascii=False))
+
+    # Print matrix
+    col_w = 10
+    print(f"\n  --- {exp_name} (cross-policy matrix) ---")
+    header = f"  {'Resident':<12} {'Type':<8}" + "".join(f"  {p:>{col_w}}" for p in POLICIES)
+    print(header)
+    print(f"  {'-'*12} {'-'*8}" + f"  {'-'*col_w}" * len(POLICIES))
+    for res in residents:
+        ptype = _persona_type(res)
+        row = f"  {res:<12} {ptype:<8}"
+        for pol in POLICIES:
+            d = summary["matrix"][res][pol]
+            cell = f"{d['successes']}/{d['runs']}={d['rate']:.0%}"
+            row += f"  {cell:>{col_w}}"
+        print(row)
+    print(f"\n  Overall: {summary['overall_success_rate']:.0%}  |  "
+          f"Training: {summary['training_persona_success_rate']:.0%}  |  "
+          f"New: {summary['new_persona_success_rate']:.0%}")
+    print(f"  Summary → {summary_file}\n")
+
+    return summary, all_results
+
+
 def _write_csv(all_rows, csv_path):
     fieldnames = [
-        "experiment", "strategy", "resident", "persona_type",
+        "experiment", "strategy", "resident", "policy", "persona_type",
         "run", "status", "success", "turns", "elapsed_seconds", "path",
     ]
     with open(csv_path, "w", newline="", encoding="utf-8") as f:
@@ -182,6 +303,9 @@ def main():
                         help="Comma-separated exp numbers to run, e.g. '1,3,5' "
                              "(default: all 1-7)")
     parser.add_argument("--seed", default=SEED)
+    parser.add_argument("--tag", default=None,
+                        help="Custom name for the output folder (e.g. 'try1'). "
+                             "Overrides the default timestamped name.")
     parser.add_argument("--test", action="store_true",
                         help="Quick test mode: 1 run with first resident only "
                              "(overrides --runs and --residents)")
@@ -205,7 +329,8 @@ def main():
     )
 
     ts_label = datetime.now().strftime("%Y%m%dT%H%M%S")
-    exp_dir = RUNS_DIR / f"exp_run_{ts_label}"
+    folder_name = args.tag if args.tag else f"exp_run_{ts_label}"
+    exp_dir = RUNS_DIR / folder_name
     exp_dir.mkdir(parents=True, exist_ok=True)
 
     print(f"\n  Output folder: {exp_dir}\n")
@@ -223,13 +348,22 @@ def main():
 
     for exp_num in exp_nums:
         t0 = time.time()
-        summary, rows = run_experiment(
-            exp_num, exp_dir, residents, args.runs, args.max_turns,
-            selector, args.seed,
-        )
+        cfg = EXPERIMENTS[exp_num]
+        if cfg["is_cross_policy"]:
+            summary, rows = run_cross_policy_experiment(
+                exp_dir, residents, args.runs, args.max_turns, args.seed,
+            )
+        else:
+            summary, rows = run_experiment(
+                exp_num, exp_dir, residents, args.runs, args.max_turns,
+                selector, args.seed,
+            )
+            # ensure 'policy' key exists for CSV consistency
+            for r in rows:
+                r.setdefault("policy", "")
         elapsed = time.time() - t0
         summary["elapsed_seconds"] = round(elapsed, 1)
-        all_summaries[EXPERIMENTS[exp_num]["name"]] = summary
+        all_summaries[cfg["name"]] = summary
         all_csv_rows.extend(rows)
 
     # ── Write detailed CSV ────────────────────────────────────────────────────

@@ -21,6 +21,12 @@ PURPOSE:
     6. RANDOM+PERSONA  — Random policy selection + persona profile, no RAG.
     7. RANDOM (no persona) — Random policy selected for tracking only;
                              prompt is identical to zero-shot.
+    8. RANDOM+RAG      — Random policy selection + per-policy RAG examples,
+                         no persona.
+    9. RANDOM+RAG+PERSONA — Random policy selection + per-policy RAG +
+                            persona profile.
+   10. RANDOM+GLOBAL-RAG+PERSONA — Random policy selection + global RAG +
+                                   persona profile.
 
 HOW IT WORKS:
     Each strategy has a dedicated prompt builder.  The public function
@@ -59,6 +65,41 @@ from config.personas import PERSONA
 from simulation.llm_client import call_llm
 
 FALLBACK_REPLY = "Please evacuate immediately; conditions can worsen quickly."
+
+# Persuasion strategy per IQL policy — describes the TACTIC to use, not the identity of the training persona.
+# This avoids the operator confusing the matched policy's identity with the actual resident.
+POLICY_STRATEGIES = {
+    "bob": (
+        "Strategy: Direct authority — state the danger is real and immediate with no softening. "
+        "This resident type is dismissive and work-focused. Generic warnings don't work. "
+        "Use a firm, unambiguous command: 'The fire will reach you in X minutes. You must leave NOW.' "
+        "No empathy needed — directness is the unlock."
+    ),
+    "niki": (
+        "Strategy: Severity confirmation + simple direction — confirm the fire IS serious with a "
+        "specific fact ('it's X miles away', 'it can reach you in under 30 minutes'), then give "
+        "ONE clear action to take. This resident type is cooperative but underestimates the threat. "
+        "Keep it brief. Don't over-explain — just confirm severity and point them in a direction."
+    ),
+    "lindsay": (
+        "Strategy: Authority + concrete plan — give explicit permission to act and provide a clear "
+        "destination or vehicle ('take them with you, a vehicle is on the way to X'). "
+        "This resident type is held back by responsibility — they need to feel they have authority "
+        "and a plan before they can move."
+    ),
+    "michelle": (
+        "Strategy: Challenge safety logic directly — do NOT accept the resident's confidence in "
+        "their preparations or safety plan. Use either (a) a firm ultimatum: 'No preparation "
+        "can stop this fire — you must leave now', or (b) an empathy challenge: 'If this were "
+        "happening to a neighbour, would you tell them to stay?' Generic urgency will not work."
+    ),
+    "ross": (
+        "Strategy: Confirm immediate practical help — immediately state that specific assistance "
+        "(a vehicle, a rescue team, a route) is on the way. Do NOT keep repeating urgency. "
+        "This resident type already wants to leave but has a logistical blocker. "
+        "Address the logistics in your very first sentence."
+    ),
+}
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -163,13 +204,11 @@ def _build_rag_successful_prompt(
 
 
 def _get_persona_block(policy_name: str) -> str:
-    """Build a persona summary from config/personas.py for the selected policy."""
-    persona = PERSONA.get(policy_name)
-    if persona and isinstance(persona, dict):
-        desc = persona.get("description", "")
-        info = persona.get("information", "")
-        return f"{desc}\n{info}"
-    return "general resident in need of evacuation assistance"
+    """Return the persuasion strategy for the IQL-selected policy."""
+    return POLICY_STRATEGIES.get(
+        policy_name,
+        "Strategy: Address the resident's specific stated concern directly and concisely.",
+    )
 
 
 def _build_iql_rag_prompt(
@@ -197,13 +236,17 @@ def _build_iql_rag_prompt(
 
     instruction = (
         "You are an emergency OPERATOR on a wildfire evacuation call.\n\n"
-        "The IQL policy selector has identified that this resident most "
-        f"closely matches the following profile:\n{persona_block}\n\n"
+        "The IQL policy selector recommends the following persuasion strategy "
+        f"for this resident:\n\n{persona_block}\n\n"
+        "IMPORTANT: If the resident has already revealed a specific concern "
+        "in the conversation that differs from this strategy, respond to "
+        "THAT concern directly — the conversation always takes priority "
+        "over the strategy suggestion.\n\n"
         "RULES:\n"
         "- 1-3 sentences maximum. Be specific, not vague.\n"
         "- Calm, professional tone. No role labels or meta commentary.\n"
-        "- Only use information revealed in the conversation — adapt your "
-        "response to what the resident has actually said."
+        "- Target the resident's specific barrier. Generic urgency alone "
+        "will not work.\n"
     )
 
     prompt = f"{instruction}\n\nConversation so far:\n{context_text}\n\n"
@@ -244,13 +287,52 @@ def _build_iql_global_rag_prompt(
 
     instruction = (
         "You are an emergency OPERATOR on a wildfire evacuation call.\n\n"
-        "The IQL policy selector has identified that this resident most "
-        f"closely matches the following profile:\n{persona_block}\n\n"
+        "The IQL policy selector recommends the following persuasion strategy "
+        f"for this resident:\n\n{persona_block}\n\n"
+        "IMPORTANT: If the resident has already revealed a specific concern "
+        "in the conversation that differs from this strategy, respond to "
+        "THAT concern directly — the conversation always takes priority "
+        "over the strategy suggestion.\n\n"
         "RULES:\n"
         "- 1-3 sentences maximum. Be specific, not vague.\n"
         "- Calm, professional tone. No role labels or meta commentary.\n"
-        "- Only use information revealed in the conversation — adapt your "
-        "response to what the resident has actually said."
+        "- Target the resident's specific barrier. Generic urgency alone "
+        "will not work.\n"
+    )
+
+    prompt = f"{instruction}\n\nConversation so far:\n{context_text}\n\n"
+    if ex_block:
+        prompt += f"Reference style examples:\n{ex_block}\n\n"
+    prompt += "Operator:"
+    return prompt.strip()
+
+
+def _build_random_rag_prompt(
+    history: List[Dict],
+    rag_examples: List[Dict],
+    max_context: int = 10,
+) -> str:
+    """Random policy + per-policy RAG examples, no persona."""
+    context = history[-max_context:]
+    context_text = "\n".join(
+        f"{'Operator' if h['role'] == 'operator' else 'Resident'}: "
+        f"{h['text'].strip()}"
+        for h in context
+    )
+
+    example_lines = []
+    for ex in rag_examples[:3]:
+        r_line = ex.get("resident_text", "").strip()
+        o_line = ex.get("operator_text", "").strip()
+        if r_line and o_line:
+            example_lines.append(f"  Resident: {r_line}\n  Operator: {o_line}")
+    ex_block = "\n\n".join(example_lines) if example_lines else None
+
+    instruction = (
+        "You are an emergency OPERATOR on a wildfire evacuation call.\n\n"
+        "RULES:\n"
+        "- 1-3 sentences maximum. Be specific, not vague.\n"
+        "- Calm, professional tone. No role labels or meta commentary.\n"
     )
 
     prompt = f"{instruction}\n\nConversation so far:\n{context_text}\n\n"
@@ -277,13 +359,17 @@ def _build_iql_persona_only_prompt(
 
     instruction = (
         "You are an emergency OPERATOR on a wildfire evacuation call.\n\n"
-        "The IQL policy selector has identified that this resident most "
-        f"closely matches the following profile:\n{persona_block}\n\n"
+        "The IQL policy selector recommends the following persuasion strategy "
+        f"for this resident:\n\n{persona_block}\n\n"
+        "IMPORTANT: If the resident has already revealed a specific concern "
+        "in the conversation that differs from this strategy, respond to "
+        "THAT concern directly — the conversation always takes priority "
+        "over the strategy suggestion.\n\n"
         "RULES:\n"
         "- 1-3 sentences maximum. Be specific, not vague.\n"
         "- Calm, professional tone. No role labels or meta commentary.\n"
-        "- Only use information revealed in the conversation — adapt your "
-        "response to what the resident has actually said."
+        "- Target the resident's specific barrier. Generic urgency alone "
+        "will not work.\n"
     )
 
     return (
@@ -300,6 +386,8 @@ VALID_STRATEGIES = (
     "zero_shot", "rag_successful",
     "iql_rag", "iql_global_rag", "iql_persona_only",
     "random_persona", "random_no_persona",
+    "random_rag", "random_rag_persona", "random_global_rag_persona",
+    "fixed_policy",
 )
 
 
@@ -355,6 +443,24 @@ def generate_operator_reply(
 
     elif strategy == "random_no_persona":
         prompt = _build_zero_shot_prompt(history)
+
+    elif strategy == "random_rag":
+        prompt = _build_random_rag_prompt(history, rag_examples or [])
+
+    elif strategy == "random_rag_persona":
+        if policy_name is None:
+            raise ValueError("policy_name is required for 'random_rag_persona'.")
+        prompt = _build_iql_rag_prompt(history, policy_name, rag_examples or [])
+
+    elif strategy == "random_global_rag_persona":
+        if policy_name is None:
+            raise ValueError("policy_name is required for 'random_global_rag_persona'.")
+        prompt = _build_iql_global_rag_prompt(history, policy_name, rag_examples or [])
+
+    elif strategy == "fixed_policy":
+        if policy_name is None:
+            raise ValueError("policy_name is required for 'fixed_policy'.")
+        prompt = _build_iql_persona_only_prompt(history, policy_name)
 
     else:
         raise ValueError(

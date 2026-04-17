@@ -36,6 +36,15 @@ PERSONA = {
             "- Believes there is still time before evacuation\n"
             "- Phone rings with fire department caller ID"
         ),
+        "barrier": (
+            "Bob's only hesitation is his work — he does not want to abandon "
+            "what he is doing. He responds to firm, direct authority that "
+            "confirms the danger is real and immediate. He does not need "
+            "transport help; he can drive himself. Once told unambiguously "
+            "that he must leave NOW and the situation is truly dangerous, he "
+            "complies quickly. Generic reassurances about safety do not move "
+            "him — he needs to feel the urgency is real, not exaggerated."
+        ),
     },
     "niki": {
         "name": "Niki",
@@ -56,6 +65,14 @@ PERSONA = {
             "- Heard there is a wildfire nearby, does not seem serious\n"
             "- Sees smoke in the distance, no flames\n"
             "- Calm and cooperative, ready to follow instructions"
+        ),
+        "barrier": (
+            "Niki is cooperative but uncertain — she underestimates the fire "
+            "because she only sees distant smoke. Her hesitation is not "
+            "resistance but uncertainty about whether it is truly serious. "
+            "She responds immediately once told the fire IS serious and given "
+            "a clear direction (e.g. follow the drone, head north). She needs "
+            "confirmation of severity plus a simple action to take."
         ),
     },
     "lindsay": {
@@ -78,6 +95,15 @@ PERSONA = {
             "- Anxious about leaving without parental approval, focused on "
             "keeping children safe"
         ),
+        "barrier": (
+            "Lindsay's blocker is parental authority — she feels she cannot "
+            "take the children somewhere without the parents' permission. She "
+            "also does not know where to go. She responds when: (1) the "
+            "operator gives her explicit authority to take the children with "
+            "her, or tells her the parents will be notified, AND (2) provides "
+            "a clear destination or sends a vehicle. Telling her the children "
+            "come first and she has the authority to act is the key unlock."
+        ),
     },
     "michelle": {
         "name": "Michelle",
@@ -97,6 +123,18 @@ PERSONA = {
             "- Feels settled and secure in her home\n"
             "- Knows wildfire is approaching, believes house is well prepared\n"
             "- Skeptical of evacuation advice, confident about staying"
+        ),
+        "barrier": (
+            "Michelle's barrier is confidence in her property preparations — "
+            "she has watered the lawn and cleared dead vegetation and believes "
+            "her house can survive. Generic urgency does not work on her; she "
+            "has heard it before and trusts her own judgment. She responds to: "
+            "(1) a firm, non-negotiable ultimatum that makes clear no "
+            "preparation can stop this specific fire, OR (2) a direct "
+            "empathetic challenge to her logic (e.g. 'Would you leave if this "
+            "were your house?' got an honest 'Yes' which flipped her). She "
+            "needs her confidence in the preparations directly undermined — "
+            "not just told it is dangerous."
         ),
     },
     "ross": {
@@ -119,6 +157,16 @@ PERSONA = {
             "- Cannot evacuate without assistance\n"
             "- Trying to stay calm in a stressful situation"
         ),
+        "barrier": (
+            "Ross is not resistant to evacuating — he WANTS to evacuate. His "
+            "barrier is purely logistical: he is stranded with elderly "
+            "passengers who have mobility issues and cannot walk out. He will "
+            "not leave them behind. The single unlock is confirmation that "
+            "emergency assistance is coming specifically for them — a vehicle, "
+            "a rescue team, or a drone directing them. Even a brief 'it's on "
+            "its way' is enough. Do not spend turns on urgency — he already "
+            "knows the danger. Address the logistics immediately."
+        ),
     },
     "mary": {
         "name": "Mary",
@@ -137,6 +185,14 @@ PERSONA = {
             "- Moves slowly due to arthritis\n"
             "- Cannot drive and needs a van for evacuation\n"
             "- Everything feels unhurried, not immediately alarmed"
+        ),
+        "barrier": (
+            "Mary has two interlocked barriers: she cannot drive and she will "
+            "not leave without her dog Poppy. She will not agree until BOTH "
+            "are addressed — a van or ride is being sent to her, AND she is "
+            "told Poppy can come with her. Addressing only one is not enough. "
+            "Once told a pet-friendly vehicle is on the way and someone will "
+            "help her board, she agrees immediately and gratefully."
         ),
     },
     "ben": {
@@ -159,6 +215,16 @@ PERSONA = {
             "- Heard about wildfire nearby, attention elsewhere\n"
             "- Regular day, not focused on evacuation"
         ),
+        "barrier": (
+            "Ben is distracted and mildly dismissive — he thinks the fire is "
+            "not close enough to matter yet. He is practical and self-reliant; "
+            "he has his e-bike and can leave quickly if convinced. He responds "
+            "to: (1) a clear, direct statement that the fire is close and he "
+            "needs to leave NOW, combined with (2) a practical suggestion that "
+            "fits his situation — e.g. he can grab his e-bike and go. He does "
+            "not need a vehicle; he is capable. Do not over-explain; be "
+            "direct and give him a concrete action to take immediately."
+        ),
     },
     "ana": {
         "name": "Ana",
@@ -177,6 +243,16 @@ PERSONA = {
             "- Responsible for elderly residents\n"
             "- Needs group transport for seniors to evacuate\n"
             "- Focused on others' safety first before her own"
+        ),
+        "barrier": (
+            "Ana will not leave without her elderly residents — she is "
+            "responsible for them and leaving them behind is not an option. "
+            "Her barrier is group logistics: she needs confirmation that "
+            "multiple accessible transport vehicles are coming to the senior "
+            "center to evacuate the residents as a group. Telling her to "
+            "leave on her own does not work. She agrees once told that "
+            "emergency vehicles are en route specifically for the senior "
+            "center and all residents will be evacuated together."
         ),
     },
     "tom": {
@@ -198,6 +274,17 @@ PERSONA = {
             "- Feels connected to the community\n"
             "- Wants to help others before leaving"
         ),
+        "barrier": (
+            "Tom is community-minded and delays leaving because he wants to "
+            "check on neighbours and help others evacuate first. He does not "
+            "fear the fire — he underestimates the personal risk because he "
+            "is focused outward. He responds when the operator: (1) "
+            "acknowledges his community concern and tells him emergency teams "
+            "are already handling his neighbours, AND (2) makes clear that "
+            "staying to help actually hinders the rescue operation. Framing "
+            "his leaving as the responsible community action — not abandonment "
+            "— is the key unlock."
+        ),
     },
     "mia": {
         "name": "Mia",
@@ -215,6 +302,18 @@ PERSONA = {
             "- Time passes without noticing much else\n"
             "- Deeply absorbed in her project\n"
             "- Phone rings with fire department caller ID"
+        ),
+        "barrier": (
+            "Mia is absorbed and initially dismissive — she does not realise "
+            "how serious the situation is. She is also at school, so she "
+            "looks for adult authority and a clear procedure to follow. She "
+            "responds when: (1) the operator is firm and specific that the "
+            "school building itself is at risk, AND (2) gives her a clear "
+            "immediate action — leave the lab, go to a specific exit, follow "
+            "the school evacuation route. Telling her the robot project can "
+            "wait and that teachers/staff are already evacuating the school "
+            "helps. She is not stubborn — she just needs to be snapped out "
+            "of her focus with a clear, authoritative instruction."
         ),
     },
 }

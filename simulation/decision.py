@@ -43,26 +43,39 @@ def _norm_conversation(
     raise ValueError("Unsupported conversation format")
 
 
-def _last_resident_utterances(utterances: List[Dict[str, str]], n: int = 2) -> str:
-    resident_turns = [u["text"] for u in utterances if u["role"] == "resident"]
-    last = resident_turns[-n:] if len(resident_turns) >= n else resident_turns
-    return "\n".join(f"Resident: {t}" for t in last)
+def _last_turns(utterances: List[Dict[str, str]], n: int = 6) -> str:
+    last = utterances[-n:] if len(utterances) >= n else utterances
+    return "\n".join(
+        f"{'Operator' if u['role'] == 'operator' else 'Resident'}: {u['text']}"
+        for u in last
+    )
 
 
 def _query_llm_decision(utterances: List[Dict[str, str]]) -> bool:
-    snippet = _last_resident_utterances(utterances, n=2)
+    snippet = _last_turns(utterances, n=6)
     prompt = (
         "You are judging a wildfire evacuation call.\n\n"
-        "Look at the resident's last 1-2 utterances below and answer "
-        "ONE WORD ONLY: YES if the resident has clearly agreed to evacuate, "
-        "NO otherwise.\n\n"
-        "Agreement means they committed to leaving — e.g. 'okay I'll go', "
-        "'fine, let me get ready', 'we'll head out', 'I'll start packing'. "
-        "Asking questions, sounding calmer, or saying 'maybe' does NOT count.\n\n"
+        "Read the last few turns below and answer ONE WORD ONLY: "
+        "YES if the resident has agreed to evacuate, NO if they are still actively resisting.\n\n"
+        "Count as YES (agreed):\n"
+        "- Explicit commitment: 'okay I'll go', 'fine, let me get ready', 'we'll head out'\n"
+        "- Implicit commitment: 'I'll keep everyone ready when help arrives', "
+        "'once the team arrives I'll be ready', 'I'll be ready to evacuate'\n"
+        "- Asking HOW to evacuate or about logistics WHILE cooperating: "
+        "'I just want to make sure my dog gets in the van', "
+        "'can you confirm there will be wheelchair access' (they are going, just asking about details)\n"
+        "- Shift from resistance to cooperation: stopped arguing against leaving, "
+        "now focused on making it work\n\n"
+        "Count as NO (still resisting):\n"
+        "- Still arguing they are safe: 'I still feel confident in our preparations'\n"
+        "- Asking WHETHER to leave: 'how can I be sure evacuating is the right choice?'\n"
+        "- Conditional refusal: 'I might leave if things get worse'\n\n"
+        "Key distinction: is the resident asking about HOW the evacuation will work "
+        "(YES) or WHETHER they should evacuate at all (NO)?\n\n"
         f"{snippet}\n\n"
         "Has the resident agreed to evacuate? Answer YES or NO:"
     )
-    output = call_llm(prompt, temperature=0.0, max_tokens=4, timeout=20).lower().strip()
+    output = call_llm(prompt, temperature=0.0, max_tokens=5, timeout=20).lower().strip()
     return bool(re.search(r"\byes\b", output))
 
 

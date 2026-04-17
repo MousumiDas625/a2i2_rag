@@ -130,8 +130,8 @@ MAX_TURNS         = 15
 K_EXAMPLES        = 2     # ICL few-shot examples per operator turn
 MAX_REFUSAL_STREAK = 5    # consecutive refusals → stop
 
-DEFAULT_TEMPERATURE_OP  = 0.
-DEFAULT_TEMPERATURE_RES = 0.9
+DEFAULT_TEMPERATURE_OP  = 0.3
+DEFAULT_TEMPERATURE_RES = 0.5
 DEFAULT_MAX_TOKENS_OP   = 64
 DEFAULT_MAX_TOKENS_RES  = 64
 
