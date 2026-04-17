@@ -45,16 +45,17 @@ SEED = ("Hello, this is the fire department. "
 POLICIES = RESIDENTS_LIST  # 5 training policies used in cross-policy exp
 
 EXPERIMENTS = {
-    1: {"name": "exp1_zero_shot",                  "strategy": "zero_shot",                "needs_iql": False, "is_cross_policy": False},
-    2: {"name": "exp2_rag_successful",             "strategy": "rag_successful",           "needs_iql": False, "is_cross_policy": False},
-    3: {"name": "exp3_iql_rag",                    "strategy": "iql_rag",                  "needs_iql": True,  "is_cross_policy": False},
-    4: {"name": "exp4_iql_global_rag",             "strategy": "iql_global_rag",           "needs_iql": True,  "is_cross_policy": False},
-    5: {"name": "exp5_iql_persona_only",           "strategy": "iql_persona_only",         "needs_iql": True,  "is_cross_policy": False},
-    6: {"name": "exp6_random_persona",             "strategy": "random_persona",           "needs_iql": False, "is_cross_policy": False},
-    7: {"name": "exp7_cross_policy",               "strategy": "fixed_policy",             "needs_iql": False, "is_cross_policy": True},
-    8: {"name": "exp8_random_rag",                 "strategy": "random_rag",               "needs_iql": False, "is_cross_policy": False},
-    9: {"name": "exp9_random_rag_persona",         "strategy": "random_rag_persona",       "needs_iql": False, "is_cross_policy": False},
-   10: {"name": "exp10_random_global_rag_persona", "strategy": "random_global_rag_persona","needs_iql": False, "is_cross_policy": False},
+    1:   {"name": "exp1_zero_shot",                  "strategy": "zero_shot",                "needs_iql": False, "is_cross_policy": False},
+    2:   {"name": "exp2_rag_successful",             "strategy": "rag_successful",           "needs_iql": False, "is_cross_policy": False},
+    3:   {"name": "exp3_iql_rag",                    "strategy": "iql_rag",                  "needs_iql": True,  "is_cross_policy": False},
+    "3b":{"name": "exp3b_iql_rag_no_persona",        "strategy": "iql_rag_no_persona",       "needs_iql": True,  "is_cross_policy": False},
+    4:   {"name": "exp4_iql_global_rag",             "strategy": "iql_global_rag",           "needs_iql": True,  "is_cross_policy": False},
+    5:   {"name": "exp5_iql_persona_only",           "strategy": "iql_persona_only",         "needs_iql": True,  "is_cross_policy": False},
+    6:   {"name": "exp6_random_persona",             "strategy": "random_persona",           "needs_iql": False, "is_cross_policy": False},
+    7:   {"name": "exp7_cross_policy",               "strategy": "fixed_policy",             "needs_iql": False, "is_cross_policy": True},
+    8:   {"name": "exp8_random_rag",                 "strategy": "random_rag",               "needs_iql": False, "is_cross_policy": False},
+    9:   {"name": "exp9_random_rag_persona",         "strategy": "random_rag_persona",       "needs_iql": False, "is_cross_policy": False},
+   10:   {"name": "exp10_random_global_rag_persona", "strategy": "random_global_rag_persona","needs_iql": False, "is_cross_policy": False},
 }
 
 TRAINING_PERSONAS = set(RESIDENTS_LIST)
@@ -322,10 +323,17 @@ def main():
     if args.test and not args.residents:
         residents = residents[:1]
 
+    def _parse_exp_key(s):
+        s = s.strip()
+        try:
+            return int(s)
+        except ValueError:
+            return s  # e.g. "3b"
+
     exp_nums = (
-        [int(x.strip()) for x in args.experiments.split(",")]
+        [_parse_exp_key(x) for x in args.experiments.split(",")]
         if args.experiments
-        else sorted(EXPERIMENTS.keys())
+        else sorted(EXPERIMENTS.keys(), key=lambda k: (int(str(k).rstrip("abcdefgh")), str(k)))
     )
 
     ts_label = datetime.now().strftime("%Y%m%dT%H%M%S")

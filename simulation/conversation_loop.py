@@ -113,6 +113,11 @@ def run_conversation(
         from retrieval.rag_retrieval import retrieve_topk_pairs
         if selector is None:
             selector = IQLPolicySelector()
+    if strategy == "iql_rag_no_persona":
+        from retrieval.policy_selector import IQLPolicySelector
+        from retrieval.rag_retrieval import retrieve_topk_pairs
+        if selector is None:
+            selector = IQLPolicySelector()
     if strategy == "iql_global_rag":
         from retrieval.policy_selector import IQLPolicySelector
         from retrieval.rag_retrieval import retrieve_from_successful
@@ -186,6 +191,16 @@ def run_conversation(
                     q_str = ", ".join(f"{k}: {v:.3f}" for k, v in qvals.items())
                     print(f"[TURN {turn_idx}] Policy: {best_policy} | Q: {{{q_str}}}")
 
+                elif strategy == "iql_rag_no_persona":
+                    best_policy, qvals = selector.select_policy(history)
+                    policy_name = best_policy
+                    last_res = next(
+                        (h["text"] for h in reversed(history) if h["role"] == "resident"), ""
+                    )
+                    rag_examples = retrieve_topk_pairs(best_policy, last_res, k=k_examples)
+                    q_str = ", ".join(f"{k}: {v:.3f}" for k, v in qvals.items())
+                    print(f"[TURN {turn_idx}] Policy: {best_policy} (no persona) | Q: {{{q_str}}}")
+
                 elif strategy == "iql_global_rag":
                     best_policy, qvals = selector.select_policy(history)
                     policy_name = best_policy
@@ -257,7 +272,7 @@ def run_conversation(
                 entry: dict = {"role": "operator", "text": op_reply}
                 if policy_name:
                     entry["selected_policy"] = policy_name
-                    if strategy in ("iql_rag", "iql_global_rag", "iql_persona_only"):
+                    if strategy in ("iql_rag", "iql_rag_no_persona", "iql_global_rag", "iql_persona_only"):
                         entry["q_values"] = qvals
                     if rag_examples:
                         entry["examples_used"] = rag_examples
@@ -294,6 +309,12 @@ def run_conversation(
             policy_close: Optional[str] = None
             qvals_close = {}
             if strategy == "iql_rag" and selector is not None:
+                policy_close, qvals_close = selector.select_policy(history)
+                last_res = next(
+                    (h["text"] for h in reversed(history) if h["role"] == "resident"), ""
+                )
+                rag_examples_close = retrieve_topk_pairs(policy_close, last_res, k=k_examples)
+            elif strategy == "iql_rag_no_persona" and selector is not None:
                 policy_close, qvals_close = selector.select_policy(history)
                 last_res = next(
                     (h["text"] for h in reversed(history) if h["role"] == "resident"), ""

@@ -304,6 +304,41 @@ def _build_iql_global_rag_prompt(
     return prompt.strip()
 
 
+def _build_iql_rag_no_persona_prompt(
+    history: List[Dict],
+    rag_examples: List[Dict],
+    max_context: int = 10,
+) -> str:
+    """IQL policy selection + per-policy RAG examples, no strategy/tactic in prompt."""
+    context = history[-max_context:]
+    context_text = "\n".join(
+        f"{'Operator' if h['role'] == 'operator' else 'Resident'}: "
+        f"{h['text'].strip()}"
+        for h in context
+    )
+
+    example_lines = []
+    for ex in rag_examples[:3]:
+        r_line = ex.get("resident_text", "").strip()
+        o_line = ex.get("operator_text", "").strip()
+        if r_line and o_line:
+            example_lines.append(f"  Resident: {r_line}\n  Operator: {o_line}")
+    ex_block = "\n\n".join(example_lines) if example_lines else None
+
+    instruction = (
+        "You are an emergency OPERATOR on a wildfire evacuation call.\n\n"
+        "RULES:\n"
+        "- 1-3 sentences maximum. Be specific, not vague.\n"
+        "- Calm, professional tone. No role labels or meta commentary.\n"
+    )
+
+    prompt = f"{instruction}\n\nConversation so far:\n{context_text}\n\n"
+    if ex_block:
+        prompt += f"Reference examples:\n{ex_block}\n\n"
+    prompt += "Operator:"
+    return prompt.strip()
+
+
 def _build_random_rag_prompt(
     history: List[Dict],
     rag_examples: List[Dict],
@@ -381,7 +416,7 @@ def _build_iql_persona_only_prompt(
 
 VALID_STRATEGIES = (
     "zero_shot", "rag_successful",
-    "iql_rag", "iql_global_rag", "iql_persona_only",
+    "iql_rag", "iql_rag_no_persona", "iql_global_rag", "iql_persona_only",
     "random_persona", "random_no_persona",
     "random_rag", "random_rag_persona", "random_global_rag_persona",
     "fixed_policy",
@@ -426,6 +461,9 @@ def generate_operator_reply(
         if policy_name is None:
             raise ValueError("policy_name is required for 'iql_rag' strategy.")
         prompt = _build_iql_rag_prompt(history, policy_name, rag_examples or [])
+
+    elif strategy == "iql_rag_no_persona":
+        prompt = _build_iql_rag_no_persona_prompt(history, rag_examples or [])
 
     elif strategy == "iql_global_rag":
         if policy_name is None:
