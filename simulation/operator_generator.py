@@ -410,6 +410,124 @@ def _build_iql_persona_only_prompt(
     ).strip()
 
 
+def _build_random_persona_prompt(
+    history: List[Dict],
+    policy_name: str,
+    max_context: int = 10,
+) -> str:
+    """Random policy selection + strategy tactic, no RAG. Neutral framing."""
+    persona_block = _get_persona_block(policy_name)
+
+    context = history[-max_context:]
+    context_text = "\n".join(
+        f"{'Operator' if h['role'] == 'operator' else 'Resident'}: "
+        f"{h['text'].strip()}"
+        for h in context
+    )
+
+    instruction = (
+        "You are an emergency OPERATOR on a wildfire evacuation call.\n\n"
+        "Consider using the following persuasion approach:\n\n"
+        f"{persona_block}\n\n"
+        "Apply this only if it fits what the resident has actually said. "
+        "If it does not fit, address what the resident said directly.\n\n"
+        "RULES:\n"
+        "- 1-3 sentences maximum. Calm, professional tone.\n"
+        "- No role labels, no meta commentary.\n"
+    )
+    return (
+        f"{instruction}\n\nConversation so far:\n{context_text}\n\nOperator:"
+    ).strip()
+
+
+def _build_random_rag_persona_prompt(
+    history: List[Dict],
+    policy_name: str,
+    rag_examples: List[Dict],
+    max_context: int = 10,
+) -> str:
+    """Random policy selection + per-policy RAG + strategy tactic. Neutral framing."""
+    persona_block = _get_persona_block(policy_name)
+
+    context = history[-max_context:]
+    context_text = "\n".join(
+        f"{'Operator' if h['role'] == 'operator' else 'Resident'}: "
+        f"{h['text'].strip()}"
+        for h in context
+    )
+
+    example_lines = []
+    for ex in rag_examples[:3]:
+        r_line = ex.get("resident_text", "").strip()
+        o_line = ex.get("operator_text", "").strip()
+        if r_line and o_line:
+            example_lines.append(f"  Resident: {r_line}\n  Operator: {o_line}")
+    ex_block = "\n\n".join(example_lines) if example_lines else None
+
+    instruction = (
+        "You are an emergency OPERATOR on a wildfire evacuation call.\n\n"
+        "Consider using the following persuasion approach:\n\n"
+        f"{persona_block}\n\n"
+        "Apply this only if it fits what the resident has actually said. "
+        "If it does not fit, address what the resident said directly.\n\n"
+        "RULES:\n"
+        "- 1-3 sentences maximum. Calm, professional tone.\n"
+        "- No role labels, no meta commentary.\n"
+    )
+
+    prompt = f"{instruction}\n\nConversation so far:\n{context_text}\n\n"
+    if ex_block:
+        prompt += f"Reference examples:\n{ex_block}\n\n"
+    prompt += "Operator:"
+    return prompt.strip()
+
+
+def _build_random_global_rag_persona_prompt(
+    history: List[Dict],
+    policy_name: str,
+    rag_examples: List[Dict],
+    max_context: int = 6,
+) -> str:
+    """Random policy selection + global RAG + strategy tactic. Neutral framing."""
+    persona_block = _get_persona_block(policy_name)
+
+    context = history[-max_context:]
+    context_text = "\n".join(
+        f"{'Operator' if h['role'] == 'operator' else 'Resident'}: "
+        f"{h['text'].strip()}"
+        for h in context
+    )
+
+    example_lines = []
+    for ex in rag_examples[:3]:
+        r_line = ex.get("resident_text", "").strip()
+        o_line = ex.get("operator_text", "").strip()
+        if r_line and o_line:
+            example_lines.append(f"  Resident: {r_line}\n  Operator: {o_line}")
+        else:
+            text = ex.get("text", "").strip()
+            if text:
+                example_lines.append(f"  Operator: {text}")
+    ex_block = "\n\n".join(example_lines) if example_lines else None
+
+    instruction = (
+        "You are an emergency OPERATOR on a wildfire evacuation call.\n\n"
+        "Consider using the following persuasion approach:\n\n"
+        f"{persona_block}\n\n"
+        "Apply this only if it fits what the resident has actually said. "
+        "If it does not fit, address what the resident said directly.\n\n"
+        "RULES:\n"
+        "- 1-3 sentences maximum. Calm, professional tone.\n"
+        "- No role labels, no meta commentary.\n"
+    )
+
+    prompt = f"{instruction}\n\nConversation so far:\n{context_text}\n\n"
+    if ex_block:
+        prompt += f"Reference examples:\n{ex_block}\n\n"
+    prompt += "Operator:"
+    return prompt.strip()
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # Public API
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -478,7 +596,7 @@ def generate_operator_reply(
     elif strategy == "random_persona":
         if policy_name is None:
             raise ValueError("policy_name is required for 'random_persona'.")
-        prompt = _build_iql_persona_only_prompt(history, policy_name)
+        prompt = _build_random_persona_prompt(history, policy_name)
 
     elif strategy == "random_no_persona":
         prompt = _build_zero_shot_prompt(history)
@@ -489,12 +607,12 @@ def generate_operator_reply(
     elif strategy == "random_rag_persona":
         if policy_name is None:
             raise ValueError("policy_name is required for 'random_rag_persona'.")
-        prompt = _build_iql_rag_prompt(history, policy_name, rag_examples or [])
+        prompt = _build_random_rag_persona_prompt(history, policy_name, rag_examples or [])
 
     elif strategy == "random_global_rag_persona":
         if policy_name is None:
             raise ValueError("policy_name is required for 'random_global_rag_persona'.")
-        prompt = _build_iql_global_rag_prompt(history, policy_name, rag_examples or [])
+        prompt = _build_random_global_rag_persona_prompt(history, policy_name, rag_examples or [])
 
     elif strategy == "fixed_policy":
         if policy_name is None:
